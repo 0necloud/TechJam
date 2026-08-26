@@ -125,6 +125,7 @@ export class CodexRunner implements AgentRunner {
   }
 
   async run(request: RunnerRequest): Promise<RunnerResult> {
+    if (request.policy) throw new Error("TrustCommit guarded Runs cannot use the host-process runner");
     if (this.active.has(request.agentId)) {
       throw new Error("Agent already has an active Codex process");
     }

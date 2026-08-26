@@ -292,6 +292,8 @@ button {
   background: #5fc99e;
 }
 
+.mini-review { background: #e3ae45; }
+
 .mini-busy {
   animation: pulse 1.2s infinite;
 }
@@ -482,6 +484,27 @@ button {
   color: #5640bc;
   background: #e8e4fb;
 }
+
+.status-review { color: #865d13; background: #fff0c9; }
+
+.evidence-panel { margin: 18px 0; padding: 20px; border: 1px solid #d9d3f4; border-radius: 14px; background: #faf9ff; }
+.evidence-heading, .decision-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.evidence-heading h3 { margin: 4px 0 0; font-size: 17px; }
+.risk { padding: 5px 9px; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: uppercase; background: #e7eee9; }
+.risk-medium { color: #805e18; background: #fff0c8; } .risk-high { color: #a13f3f; background: #fae1df; }
+.policy-facts { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
+.policy-facts span { padding: 5px 8px; border: 1px solid #dfdce9; border-radius: 7px; color: #5f5c69; background: white; font-size: 10px; }
+.workspace-safe { color: #277756; font-weight: 650; font-size: 12px; }
+.policy-rule { padding: 9px; border-left: 3px solid #c55353; background: #fff3f1; font-size: 12px; }
+.change-list details { border-top: 1px solid var(--line); padding: 9px 0; }
+.change-list summary { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.change-list small { margin-left: auto; color: var(--muted); }
+.change-kind { min-width: 57px; font-size: 9px; font-weight: 800; text-transform: uppercase; } .kind-added { color: #277756; } .kind-modified { color: #865d13; } .kind-deleted { color: #ac4343; }
+.change-list pre { overflow: auto; max-height: 280px; padding: 12px; border-radius: 8px; background: #272725; color: #eee; font-size: 11px; white-space: pre-wrap; }
+.audit-timeline { padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.audit-timeline li { display: grid; grid-template-columns: 64px 1fr; gap: 10px; padding: 7px 0; font-size: 11px; }
+.audit-timeline time, .audit-timeline span { color: var(--muted); } .audit-timeline span { display: block; margin-top: 2px; }
+.decision-actions { justify-content: flex-end; margin-top: 14px; }
 
 .status-error {
   color: #ac4343;

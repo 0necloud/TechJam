@@ -1,16 +1,17 @@
-# Volc Agent Launchpad
+# TrustCommit Agent Launchpad
 
-A minimal Agent platform for three-day middleware hackathons. It provides Agent
-CRUD, a browser Playground, persistent workspaces, and Codex CLI backed by the
-Volcengine Ark Responses API.
+A capability-scoped transactional Agent Runtime built on Volc Agent Launchpad.
+TrustCommit is the **Kill Switch** hackathon track: Codex works in quarantine,
+deterministic policy blocks protected effects, and a human approves safe
+changes before they reach the live workspace.
 
 Run it locally with Docker, Colima, or rootless Podman, or deploy it to
 Volcengine ECS.
 
 > [!WARNING]
-> This is a single-user proof of concept. It intentionally has no identity,
-> tracing, audit, or hardened sandbox middleware. Do not use production data or
-> credentials. See [SECURITY.md](SECURITY.md).
+> This remains a single-user proof of concept. TrustCommit adds transaction,
+> policy, audit, and container controls, but it is not hardened multi-tenant
+> isolation. Do not use production data or credentials. See [SECURITY.md](SECURITY.md).
 
 ## Screenshots
 
@@ -29,6 +30,9 @@ Volcengine ECS.
 - Fastify control plane with asynchronous Run state
 - Persistent Agent workspaces and Codex sessions
 - Disposable Docker, Colima, or Podman container for each local turn
+- Per-Run staging workspaces and per-Agent private Codex homes
+- Deterministic protected-path, symlink, credential, and size policy
+- Review evidence with approve/reject and conflict-safe promotion
 - Docker and Terraform deployment paths for Volcengine ECS
 
 ## Requirements
@@ -128,6 +132,12 @@ For a clean Linux host, follow the
 
 ## Docker Compose
 
+The legacy single-container Compose profile can serve the control plane and UI,
+but it cannot execute TrustCommit Runs unless that environment provides a
+separate supported container engine. TrustCommit never mounts the Docker socket
+and never falls back to in-process Codex. Use `npm run poc` for the complete
+local acceptance path.
+
 Create and edit the configuration:
 
 ```bash
@@ -203,7 +213,7 @@ cp deploy/volcengine/terraform.tfvars.example \
 | `ARK_MODEL` | Required | Responses-capable endpoint or model ID. |
 | `ARK_BASE_URL` | Beijing v3 endpoint | Ark OpenAI-compatible API URL. |
 | `APP_AUTH_TOKEN` | Empty on loopback | Shared demo token; use 24+ random characters remotely. |
-| `RUNTIME_PROVIDER` | `local-process` | `container` for disposable local Runtime containers. |
+| `RUNTIME_PROVIDER` | `container` | Guarded Runs require disposable Runtime containers and fail closed otherwise. |
 | `CODEX_SANDBOX_MODE` | `workspace-write` | Codex inner sandbox mode. |
 | `CODEX_TIMEOUT_MS` | `600000` | Maximum duration of one turn. |
 | `LOCAL_POC_DATA_ROOT` | Platform-specific | Local metadata, workspace, and session directory. |
@@ -214,17 +224,54 @@ See [.env.example](.env.example) for all Runtime and resource-limit options.
 
 ```mermaid
 flowchart LR
-    UI["React Web UI"] --> API["Fastify control plane"]
-    API --> Store["JSON metadata and Agent workspaces"]
-    API --> Runtime{"Runtime provider"}
-    Runtime -->|Local POC| Container["Disposable Docker / Colima / Podman container"]
-    Runtime -->|ECS profile| Codex["Codex CLI in application container"]
-    Container --> Ark["Volcengine Ark Responses API"]
-    Codex --> Ark
+    UI["React review UI"] --> API["Fastify control plane"]
+    API --> TX["Transaction + deterministic policy"]
+    Live["Live workspace"] -->|copy + digest| Stage["Run staging workspace"]
+    TX --> Stage --> Container["Restricted disposable container"] --> Ark["Volcengine Ark"]
+    Container --> Inspect["Inspect changes"] --> Review["Human review"]
+    Review -->|approve if digest matches| Live
+    Review -->|reject or deny| Discard["Discard staging"]
 ```
 
-The first turn uses `codex exec`; later turns resume the stored Codex thread.
-Deleting an Agent archives its workspace under `workspaces/.deleted/`.
+Only staging and the selected Agent's private Codex home are writable Runtime
+mounts. Approved turns commit both files and the proposed Codex thread;
+rejection resets session state. TrustCommit uses Architecture B: Codex acts
+autonomously, so enforcement occurs at mounts, Runtime lifetime, deterministic
+file policy, and promotion—not through a claimed per-tool interceptor.
+
+## TrustCommit demo
+
+1. On WSL2/Linux with Docker or rootless Podman, run
+   `ARK_API_KEY=... ARK_MODEL=... npm run poc`.
+2. Ask an Agent to create a small program and test. Confirm the evidence panel
+   says the live workspace is unchanged, then approve the proposed changes.
+3. Ask it to create a dummy `.env`. Rule `TC002` denies promotion and the live
+   workspace stays unchanged.
+
+Middleware development uses deterministic fake runners and needs no model:
+
+```bash
+npm install
+npm run check
+```
+
+Live Ark credentials are required only for the final real-model demo.
+
+## Threat model and limitations
+
+Protected assets are live Agent workspaces, other Agents' session state, host
+paths, and persisted evidence. Controls include staging-only mounts, private
+session homes, protected-path and symlink denial, stale-digest conflicts,
+read-only container roots, bounded `/tmp`, and resource limits.
+
+Residual risks: bridge networking is not Ark-only egress; the Runtime receives
+the Ark credential; ordinary containers are not hostile multi-tenant
+isolation; and the JSON store is single-process. Profiles unable to launch a
+disposable Runtime fail closed. The optional Ark gateway is not implemented.
+
+Implementation contribution: one sequential owner implemented the core data
+model, transaction boundary, Runtime policy, lifecycle/API, evidence UI,
+tests, and documentation.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component and extension
 boundaries.

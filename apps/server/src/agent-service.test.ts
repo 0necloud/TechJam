@@ -3,7 +3,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentService } from "./agent-service.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, writeCodexConfig } from "./config.js";
 import { JsonStore } from "./store.js";
 import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
@@ -45,7 +45,9 @@ async function makeService(runner: AgentRunner = new FakeRunner()): Promise<Agen
     CODEX_HOME: path.join(root, "codex"),
     ARK_API_KEY: "test-key",
     ARK_MODEL: "ep-test",
+    RUNTIME_PROVIDER: "container",
   });
+  await writeCodexConfig(config);
   const service = new AgentService(
     config,
     new JsonStore(path.join(root, "data", "db.json")),

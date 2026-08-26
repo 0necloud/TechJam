@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { access } from "node:fs/promises";
 import type { AppConfig } from "./config.js";
-import { isArkConfigured } from "./config.js";
+import { ensureAgentCodexHome, isArkConfigured } from "./config.js";
 import { HttpError, RunCancelledError } from "./errors.js";
 import { JsonStore } from "./store.js";
 import type {
@@ -10,25 +11,46 @@ import type {
   CreateAgentInput,
   Message,
   UpdateAgentInput,
+  RunEvidence,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
+import { WorkspaceTransactionManager } from "./workspace-transaction.js";
+import { createRunPolicy } from "./run-policy.js";
+import { evaluateChanges } from "./change-policy.js";
+import { auditEvent, redact } from "./audit-recorder.js";
 
 const now = () => new Date().toISOString();
 
 export class AgentService {
   private readonly activeExecutions = new Map<string, Promise<void>>();
   private readonly cancellationRequests = new Set<string>();
+  private readonly decisionsInProgress = new Set<string>();
+  private readonly transactions: WorkspaceTransactionManager;
 
   constructor(
     private readonly config: AppConfig,
     private readonly store: JsonStore,
     private readonly workspaces: WorkspaceManager,
     private readonly runner: AgentRunner,
-  ) {}
+  ) { this.transactions = new WorkspaceTransactionManager(config.workspaceRoot); }
 
   async initialize(): Promise<void> {
     await this.store.initialize();
     await this.workspaces.initialize();
+    await this.transactions.initialize();
+    const snapshot = this.store.snapshot();
+    for (const run of snapshot.runs) {
+      if (run.transaction) await this.transactions.reconcile(run.transaction, run.status === "completed" && run.decision?.decision === "approve");
+      if ((run.status === "queued" || run.status === "running") && run.transaction) await this.transactions.discard(run.transaction).catch(() => undefined);
+      if (run.status === "awaiting_review" && run.transaction) {
+        try { await access(run.transaction.stagingPath); } catch { await this.store.mutate((database) => {
+          const stored = database.runs.find((item) => item.id === run.id);
+          const agent = database.agents.find((item) => item.id === run.agentId);
+          if (stored) { stored.status = "failed"; stored.error = "Pending review transaction was missing after restart"; stored.completedAt = now(); }
+          if (agent) { agent.status = "error"; agent.lastError = stored?.error ?? null; }
+        }); }
+      }
+    }
     await this.store.mutate((database) => {
       for (const run of database.runs) {
         if (run.status === "queued" || run.status === "running") {
@@ -42,6 +64,7 @@ export class AgentService {
           agent.status = "ready";
           agent.updatedAt = now();
         }
+        if (agent.status === "review" && !database.runs.some((run) => run.agentId === agent.id && run.status === "awaiting_review")) agent.status = "ready";
       }
     });
   }
@@ -82,7 +105,7 @@ export class AgentService {
 
   async updateAgent(id: string, input: UpdateAgentInput): Promise<Agent> {
     const current = this.getAgent(id);
-    if (current.status === "busy") {
+    if (current.status === "busy" || current.status === "review") {
       throw new HttpError(409, "Stop the active run before editing this Agent");
     }
     const updated = await this.store.mutate((database) => {
@@ -90,7 +113,7 @@ export class AgentService {
       if (!agent) {
         throw new HttpError(404, "Agent not found");
       }
-      if (agent.status === "busy") {
+      if (agent.status === "busy" || agent.status === "review") {
         throw new HttpError(409, "Stop the active run before editing this Agent");
       }
       if (input.name !== undefined) agent.name = input.name.trim();
@@ -107,6 +130,7 @@ export class AgentService {
   async deleteAgent(id: string): Promise<{ archivedWorkspace: string }> {
     const agent = this.getAgent(id);
     await this.cancelExecution(id);
+    for (const run of this.getRuns(id)) if (run.transaction) await this.transactions.discard(run.transaction).catch(() => undefined);
     const archivedWorkspace = await this.workspaces.archive(agent);
     await this.store.mutate((database) => {
       database.agents = database.agents.filter((item) => item.id !== id);
@@ -121,8 +145,10 @@ export class AgentService {
   }
 
   async stopAgent(id: string): Promise<Agent> {
-    this.getAgent(id);
+    const agent = this.getAgent(id);
     await this.cancelExecution(id);
+    const pending = this.getRuns(id).find((run) => run.status === "awaiting_review");
+    if (pending) await this.cancelPendingReview(pending.id);
     return this.setStatus(id, "stopped");
   }
 
@@ -150,6 +176,13 @@ export class AgentService {
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
+  async getRunEvidence(runId: string): Promise<RunEvidence> {
+    const run = this.getRun(runId);
+    const unchanged = run.transaction ? await this.transactions.liveDigest(run.transaction).then((value) => value === run.transaction!.initialDigest).catch(() => false) : true;
+    const safeRun = { ...run, prompt: redact(run.prompt), output: run.output ? redact(run.output) : null, error: run.error ? redact(run.error) : null };
+    return { run: safeRun, policy: run.policy, timeline: run.auditEvents, changes: run.changes, policyDecision: run.policyDecision, decision: run.decision, liveWorkspaceUnchanged: unchanged };
+  }
+
   async sendMessage(
     agentId: string,
     prompt: string,
@@ -170,6 +203,13 @@ export class AgentService {
       output: null,
       error: null,
       usage: null,
+      proposedThreadId: null,
+      policy: null,
+      transaction: null,
+      changes: [],
+      policyDecision: null,
+      decision: null,
+      auditEvents: [],
       startedAt: null,
       completedAt: null,
       createdAt: timestamp,
@@ -190,10 +230,11 @@ export class AgentService {
       if (storedAgent.status === "stopped") {
         throw new HttpError(409, "Start the Agent before sending a message");
       }
-      if (storedAgent.status === "busy") {
-        throw new HttpError(409, "This Agent is already running");
+      if (storedAgent.status === "busy" || storedAgent.status === "review") {
+        throw new HttpError(409, storedAgent.status === "review" ? "Review the pending Run before sending another message" : "This Agent is already running");
       }
       database.runs.push(run);
+      run.auditEvents.push(auditEvent(run, "run.created", "Run queued for guarded execution"));
       database.messages.push(message);
       const snapshot = structuredClone(storedAgent);
       storedAgent.status = "busy";
@@ -233,45 +274,67 @@ export class AgentService {
   }
 
   private async executeRun(agentAtStart: Agent, run: AgentRun): Promise<void> {
+    let transaction: AgentRun["transaction"] = null;
     await this.store.mutate((database) => {
       const storedRun = database.runs.find((item) => item.id === run.id);
       if (storedRun) {
         storedRun.status = "running";
         storedRun.startedAt = now();
+        storedRun.policy = createRunPolicy(run.id, agentAtStart.id, this.config);
+        storedRun.auditEvents.push(auditEvent(storedRun, "policy.created", "Staging-only container policy created"));
       }
     });
     try {
       if (this.cancellationRequests.has(agentAtStart.id)) {
         throw new RunCancelledError();
       }
+      if (this.config.runtimeProvider !== "container") throw new Error("TrustCommit guarded Runs require RUNTIME_PROVIDER=container");
+      transaction = await this.transactions.prepare(run.id, agentAtStart.workspacePath);
+      const codexHomePath = await ensureAgentCodexHome(this.config, agentAtStart.id);
+      const activeRun = this.getRun(run.id);
+      await this.store.mutate((database) => { const stored = database.runs.find((item) => item.id === run.id); if (stored) { stored.transaction = transaction; stored.auditEvents.push(auditEvent(stored, "workspace.staged", "Live workspace copied into an isolated transaction"), auditEvent(stored, "runtime.started", "Container Runtime started with staging and private session mounts")); } });
       const result = await this.runner.run({
+        runId: run.id,
         agentId: agentAtStart.id,
-        workspacePath: agentAtStart.workspacePath,
+        workspacePath: transaction.stagingPath,
+        codexHomePath,
         prompt: run.prompt,
         threadId: agentAtStart.codexThreadId,
+        policy: activeRun.policy!,
       });
-      const completedAt = now();
+      const changes = await this.transactions.inspect(transaction);
+      const decision = changes.length ? evaluateChanges(changes) : null;
+      const inspectedAt = now();
       await this.store.mutate((database) => {
         const storedRun = database.runs.find((item) => item.id === run.id);
         const agent = database.agents.find((item) => item.id === agentAtStart.id);
         if (!storedRun || !agent) return;
-        storedRun.status = "completed";
-        storedRun.output = result.output;
+        storedRun.auditEvents.push(auditEvent(storedRun, "runtime.completed", "Container Runtime completed"), auditEvent(storedRun, "workspace.inspected", `${changes.length} proposed file change(s) inspected`));
+        storedRun.output = redact(result.output, 50_000);
         storedRun.usage = result.usage;
-        storedRun.completedAt = completedAt;
-        database.messages.push({
-          id: randomUUID(),
-          agentId: agent.id,
-          runId: run.id,
-          role: "assistant",
-          content: result.output,
-          createdAt: completedAt,
-        });
-        agent.status = "ready";
-        agent.codexThreadId = result.threadId;
+        storedRun.proposedThreadId = result.threadId;
+        storedRun.changes = changes.map((change) => ({ ...change, ...(change.patch ? { patch: redact(change.patch) } : {}) }));
+        storedRun.policyDecision = decision;
+        if (decision?.outcome === "denied") {
+          storedRun.status = "rejected"; storedRun.completedAt = inspectedAt;
+          storedRun.auditEvents.push(auditEvent(storedRun, "policy.denied", "Change policy denied promotion", decision.rules.map((rule) => rule.id)));
+          agent.status = "ready"; agent.codexThreadId = null;
+        } else if (changes.length) {
+          storedRun.status = "awaiting_review"; storedRun.auditEvents.push(auditEvent(storedRun, "policy.review_required", "Changes require human approval", decision?.rules.map((rule) => rule.id)));
+          agent.status = "review";
+        } else {
+          storedRun.status = "completed"; storedRun.completedAt = inspectedAt;
+          storedRun.auditEvents.push(auditEvent(storedRun, "run.completed", "Run completed without workspace changes"));
+          database.messages.push({ id: randomUUID(), agentId: agent.id, runId: run.id, role: "assistant", content: storedRun.output ?? "", createdAt: inspectedAt });
+          agent.status = "ready"; agent.codexThreadId = result.threadId;
+        }
         agent.lastError = null;
-        agent.updatedAt = completedAt;
+        agent.updatedAt = inspectedAt;
       });
+      if (decision?.outcome === "denied") {
+        await this.transactions.discard(transaction);
+        await this.store.mutate((database) => { const stored = database.runs.find((item) => item.id === run.id); if (stored) stored.auditEvents.push(auditEvent(stored, "workspace.discarded", "Denied staging transaction discarded")); });
+      } else if (!changes.length) await this.transactions.discard(transaction);
     } catch (error) {
       const completedAt = now();
       const cancelled = error instanceof RunCancelledError;
@@ -283,6 +346,7 @@ export class AgentService {
           storedRun.status = cancelled ? "cancelled" : "failed";
           storedRun.error = message;
           storedRun.completedAt = completedAt;
+          storedRun.auditEvents.push(auditEvent(storedRun, "run.failed", cancelled ? "Run cancelled and staging discarded" : message));
         }
         if (agent) {
           if (agent.status !== "stopped") {
@@ -292,7 +356,45 @@ export class AgentService {
           agent.updatedAt = completedAt;
         }
       });
+      if (transaction) await this.transactions.discard(transaction).catch(() => undefined);
     }
+  }
+
+  async approveRun(runId: string, reason?: string): Promise<AgentRun> { return this.decideRun(runId, "approve", reason); }
+  async rejectRun(runId: string, reason?: string): Promise<AgentRun> { return this.decideRun(runId, "reject", reason); }
+
+  private async decideRun(runId: string, decision: "approve" | "reject", reason?: string): Promise<AgentRun> {
+    if (this.decisionsInProgress.has(runId)) throw new HttpError(409, "A decision is already being applied");
+    const run = this.getRun(runId);
+    if (run.status !== "awaiting_review" || !run.transaction) throw new HttpError(409, "Only Runs awaiting review may receive a decision");
+    this.decisionsInProgress.add(runId);
+    try {
+      if (decision === "approve") await this.transactions.promote(run.transaction); else await this.transactions.discard(run.transaction);
+      const timestamp = now();
+      const decided = await this.store.mutate((database) => {
+        const stored = database.runs.find((item) => item.id === runId);
+        const agent = database.agents.find((item) => item.id === run.agentId);
+        if (!stored || !agent || stored.status !== "awaiting_review") throw new HttpError(409, "Run decision state changed");
+        stored.decision = { decision, reason: reason?.trim() || null, decidedAt: timestamp };
+        stored.completedAt = timestamp;
+        stored.status = decision === "approve" ? "completed" : "rejected";
+        stored.auditEvents.push(auditEvent(stored, decision === "approve" ? "human.approved" : "human.rejected", decision === "approve" ? "Human approved proposed changes" : "Human rejected proposed changes"), auditEvent(stored, decision === "approve" ? "workspace.promoted" : "workspace.discarded", decision === "approve" ? "Staging workspace promoted" : "Staging workspace discarded"), auditEvent(stored, "run.completed", decision === "approve" ? "Run completed after approval" : "Run closed after rejection"));
+        if (decision === "approve") {
+          agent.codexThreadId = stored.proposedThreadId;
+          database.messages.push({ id: randomUUID(), agentId: agent.id, runId, role: "assistant", content: stored.output ?? "", createdAt: timestamp });
+        } else agent.codexThreadId = null;
+        agent.status = "ready"; agent.lastError = null; agent.updatedAt = timestamp;
+        return structuredClone(stored);
+      });
+      if (decision === "approve") await this.transactions.finalizePromotion(run.transaction).catch(() => undefined);
+      return decided;
+    } finally { this.decisionsInProgress.delete(runId); }
+  }
+
+  private async cancelPendingReview(runId: string): Promise<void> {
+    const run = this.getRun(runId);
+    if (run.transaction) await this.transactions.discard(run.transaction);
+    await this.store.mutate((database) => { const stored = database.runs.find((item) => item.id === runId); if (stored && stored.status === "awaiting_review") { stored.status = "cancelled"; stored.error = "Run cancelled while awaiting review"; stored.completedAt = now(); stored.auditEvents.push(auditEvent(stored, "workspace.discarded", "Pending staging transaction discarded"), auditEvent(stored, "run.failed", "Run cancelled while awaiting review")); } });
   }
 
   private async setStatus(id: string, status: Agent["status"]): Promise<Agent> {
@@ -301,7 +403,7 @@ export class AgentService {
       if (!agent) {
         throw new HttpError(404, "Agent not found");
       }
-      if (status === "ready" && agent.status === "busy") {
+      if (status === "ready" && (agent.status === "busy" || agent.status === "review")) {
         throw new HttpError(409, "Stop the active run before starting this Agent");
       }
       agent.status = status;
@@ -314,6 +416,10 @@ export class AgentService {
   private async cancelExecution(agentId: string): Promise<void> {
     this.cancellationRequests.add(agentId);
     try {
+      await this.store.mutate((database) => {
+        const active = database.runs.find((run) => run.agentId === agentId && (run.status === "queued" || run.status === "running"));
+        if (active?.policy && !active.policy.revokedAt) active.policy.revokedAt = now();
+      });
       await this.runner.cancel(agentId);
       const execution = this.activeExecutions.get(agentId);
       if (execution) {

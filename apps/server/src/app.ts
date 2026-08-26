@@ -22,6 +22,7 @@ const updateAgentBody = createAgentBody.partial().refine(
 const messageBody = z.object({
   content: z.string().trim().min(1).max(50_000),
 });
+const decisionBody = z.object({ decision: z.enum(["approve", "reject"]), reason: z.string().trim().max(1_000).optional() });
 
 export async function createApp(
   config: AppConfig,
@@ -126,6 +127,17 @@ export async function createApp(
   app.get("/api/runs/:id", async (request) => {
     const { id } = runIdParams.parse(request.params);
     return { run: service.getRun(id) };
+  });
+
+  app.get("/api/runs/:id/evidence", async (request) => {
+    const { id } = runIdParams.parse(request.params);
+    return { evidence: await service.getRunEvidence(id) };
+  });
+
+  app.post("/api/runs/:id/decision", async (request) => {
+    const { id } = runIdParams.parse(request.params);
+    const body = decisionBody.parse(request.body);
+    return { run: body.decision === "approve" ? await service.approveRun(id, body.reason) : await service.rejectRun(id, body.reason) };
   });
 
   if (config.nodeEnv === "production") {

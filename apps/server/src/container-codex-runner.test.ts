@@ -6,6 +6,7 @@ import {
 } from "./container-codex-runner.js";
 
 describe("Container Codex runner", () => {
+  const policy = (runId: string, agentId: string) => ({ id: "policy", runId, agentId, runtime: "container" as const, workspaceAccess: "staging-only" as const, sessionAccess: "agent-only" as const, networkMode: "current-bridge" as const, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(), revokedAt: null, maxDurationMs: 60_000 });
   it("builds an isolated Docker/Podman-compatible invocation", () => {
     const config = loadConfig({
       NODE_ENV: "test",
@@ -20,10 +21,13 @@ describe("Container Codex runner", () => {
     });
     const args = buildContainerRunArgs(
       {
+        runId: "run",
         agentId: "agent/unsafe",
         workspacePath: "/tmp/agent-workspace",
+        codexHomePath: "/tmp/codex-home/agent-unsafe",
         prompt: "write a small program",
         threadId: null,
+        policy: policy("run", "agent/unsafe"),
       },
       config,
     );
@@ -33,7 +37,9 @@ describe("Container Codex runner", () => {
     );
     expect(args).toContain("runtime:test");
     expect(args).toContain("type=bind,src=/tmp/agent-workspace,dst=/workspace");
-    expect(args).toContain("type=bind,src=/tmp/codex-home,dst=/codex-home");
+    expect(args).toContain("type=bind,src=/tmp/codex-home/agent-unsafe,dst=/codex-home");
+    expect(args).toContain("--read-only");
+    expect(args).toContain("/tmp:rw,nosuid,nodev,noexec,size=64m");
     expect(args).toContain("501:20");
     expect(args).toContain("workspace-write");
     expect(args).toContain("/workspace");
@@ -50,10 +56,13 @@ describe("Container Codex runner", () => {
     });
     const args = buildContainerRunArgs(
       {
+        runId: "run",
         agentId: "agent",
         workspacePath: "/tmp/workspace",
+        codexHomePath: "/tmp/codex-home/agent",
         prompt: "continue",
         threadId: "thread-123",
+        policy: policy("run", "agent"),
       },
       config,
     );

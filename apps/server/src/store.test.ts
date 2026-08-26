@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,6 +15,14 @@ afterEach(async () => {
 });
 
 describe("JsonStore", () => {
+  it("migrates version-one Runs without losing records", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-")); temporaryDirectories.push(root);
+    const file = path.join(root, "db.json");
+    await writeFile(file, JSON.stringify({ version: 1, agents: [], messages: [], runs: [{ id: "run", agentId: "agent", status: "completed", prompt: "hello", output: "done", error: null, usage: null, startedAt: null, completedAt: null, createdAt: new Date().toISOString() }] }));
+    const store = new JsonStore(file); await store.initialize();
+    expect(store.snapshot()).toMatchObject({ version: 2, runs: [{ id: "run", changes: [], auditEvents: [], policy: null }] });
+    expect(JSON.parse(await readFile(file, "utf8")).version).toBe(2);
+  });
   it("does not publish a mutation in memory when persistence fails", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
     temporaryDirectories.push(root);

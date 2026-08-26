@@ -15,7 +15,7 @@ const envSchema = z.object({
     .default("workspace-write"),
   CODEX_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(600_000),
   CODEX_MAX_OUTPUT_BYTES: z.coerce.number().int().min(65_536).default(2_097_152),
-  RUNTIME_PROVIDER: z.enum(["local-process", "container"]).default("local-process"),
+  RUNTIME_PROVIDER: z.enum(["local-process", "container"]).default("container"),
   CONTAINER_ENGINE: z.string().min(1).default("docker"),
   CONTAINER_RUNTIME_IMAGE: z.string().min(1).default("volc-agent-runtime:local"),
   CONTAINER_CPU_LIMIT: z.coerce.number().positive().default(2),
@@ -119,4 +119,14 @@ export async function writeCodexConfig(config: AppConfig): Promise<void> {
     encoding: "utf8",
     mode: 0o600,
   });
+}
+
+export async function ensureAgentCodexHome(config: AppConfig, agentId: string): Promise<string> {
+  const agentHome = path.join(config.codexHome, agentId);
+  const relative = path.relative(config.codexHome, agentHome);
+  if (!relative || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) throw new Error("Invalid Agent Codex home");
+  await mkdir(agentHome, { recursive: true });
+  const template = await import("node:fs/promises").then(({ readFile }) => readFile(path.join(config.codexHome, "config.toml"), "utf8"));
+  await writeFile(path.join(agentHome, "config.toml"), template, { encoding: "utf8", mode: 0o600 });
+  return agentHome;
 }

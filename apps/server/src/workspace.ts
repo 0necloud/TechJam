@@ -12,6 +12,8 @@ export class WorkspaceManager {
   async initialize(): Promise<void> {
     await mkdir(this.root, { recursive: true });
     await mkdir(path.join(this.root, ".deleted"), { recursive: true });
+    await mkdir(path.join(this.root, ".transactions"), { recursive: true });
+    await mkdir(path.join(this.root, ".rollback"), { recursive: true });
   }
 
   async create(agent: Agent): Promise<void> {

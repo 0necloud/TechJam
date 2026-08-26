@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, setAuthToken } from "./api";
-import type { Agent, AgentRun, Message, SystemInfo } from "./types";
+import type { Agent, AgentRun, Message, RunEvidence, SystemInfo } from "./types";
 
 const starterPrompts = [
   "Create a small TypeScript CLI that prints a weather summary from sample JSON.",
@@ -45,6 +45,7 @@ export default function App() {
   const [form, setForm] = useState(emptyForm);
   const [prompt, setPrompt] = useState("");
   const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
+  const [evidence, setEvidence] = useState<RunEvidence | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
@@ -98,6 +99,7 @@ export default function App() {
 
   useEffect(() => {
     setActiveRun(null);
+    setEvidence(null);
     setShowSettings(false);
     if (!selectedId) {
       setMessages([]);
@@ -113,6 +115,7 @@ export default function App() {
             setError(reason instanceof Error ? reason.message : String(reason)),
           );
         }
+        if (latest && !["queued", "running"].includes(latest.status)) void api.evidence(latest.id).then(({ evidence }) => setEvidence(evidence));
       })
       .catch((reason) =>
         setError(reason instanceof Error ? reason.message : String(reason)),
@@ -211,6 +214,8 @@ export default function App() {
         const result = await api.run(runId);
         if (selectedIdRef.current === agentId) setActiveRun(result.run);
         if (!["queued", "running"].includes(result.run.status)) {
+          const details = await api.evidence(runId);
+          if (selectedIdRef.current === agentId) setEvidence(details.evidence);
           await Promise.all([refreshMessages(agentId), refreshAgents()]);
           return;
         }
@@ -218,6 +223,20 @@ export default function App() {
     } finally {
       pollingRunIds.current.delete(runId);
     }
+  };
+
+  const decideRun = async (decision: "approve" | "reject") => {
+    if (!activeRun) return;
+    const reason = decision === "reject" ? window.prompt("Optional rejection reason") ?? undefined : "Reviewed proposed changes";
+    setBusy(true); setError(null);
+    try {
+      const result = await api.decide(activeRun.id, decision, reason);
+      setActiveRun(result.run);
+      const details = await api.evidence(result.run.id);
+      setEvidence(details.evidence);
+      await Promise.all([refreshMessages(result.run.agentId), refreshAgents()]);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
   };
 
   const sendMessage = async (event: React.FormEvent) => {
@@ -406,7 +425,7 @@ export default function App() {
                 <button
                   className="button button-ghost"
                   onClick={() => setShowSettings((value) => !value)}
-                  disabled={busy || selected.status === "busy"}
+                  disabled={busy || selected.status === "busy" || selected.status === "review"}
                 >
                   Settings
                 </button>
@@ -420,7 +439,7 @@ export default function App() {
                 <button
                   className="button button-danger"
                   onClick={deleteAgent}
-                  disabled={busy || selected.status === "busy"}
+                  disabled={busy || selected.status === "busy" || selected.status === "review"}
                 >
                   Delete
                 </button>
@@ -538,6 +557,25 @@ export default function App() {
                     <span>{activeRun.error}</span>
                   </article>
                 )}
+                {evidence && (
+                  <section className="evidence-panel" aria-label="Run evidence">
+                    <div className="evidence-heading">
+                      <div><span className="eyebrow">TrustCommit evidence</span><h3>{evidence.run.status === "awaiting_review" ? "Changes quarantined for review" : "Run outcome: " + evidence.run.status}</h3></div>
+                      <span className={"risk risk-" + (evidence.policyDecision?.risk ?? "low")}>{evidence.policyDecision?.risk ?? "no-change"} risk</span>
+                    </div>
+                    <div className="policy-facts">
+                      <span>Container Runtime</span><span>Staging-only workspace</span><span>Private Agent session</span><span>{evidence.policy?.networkMode ?? "policy unavailable"}</span>
+                    </div>
+                    {evidence.run.status === "awaiting_review" && <p className="workspace-safe">✓ Live workspace unchanged: {evidence.liveWorkspaceUnchanged ? "confirmed" : "conflict detected"}</p>}
+                    {evidence.policyDecision?.rules.map((rule) => <p className="policy-rule" key={rule.id}><strong>{rule.id}</strong> — {rule.message}</p>)}
+                    <div className="change-list">
+                      {evidence.changes.map((change) => <details key={change.path}><summary><span className={"change-kind kind-" + change.kind}>{change.kind}</span><code>{change.path}</code><small>{change.size} bytes</small></summary>{change.patch && <pre>{change.patch}</pre>}</details>)}
+                      {!evidence.changes.length && <p>No workspace changes were proposed.</p>}
+                    </div>
+                    <ol className="audit-timeline">{evidence.timeline.map((event) => <li key={event.id}><time>{formatTime(event.timestamp)}</time><div><strong>{event.type}</strong><span>{event.summary}</span></div></li>)}</ol>
+                    {evidence.run.status === "awaiting_review" && <div className="decision-actions"><button className="button button-danger" disabled={busy} onClick={() => void decideRun("reject")}>Reject changes</button><button className="button button-primary" disabled={busy || !evidence.liveWorkspaceUnchanged} onClick={() => void decideRun("approve")}>Approve and promote</button></div>}
+                  </section>
+                )}
                 <div ref={messageEnd} />
               </div>
 
@@ -558,7 +596,7 @@ export default function App() {
                   }
                   disabled={
                     selected.status === "stopped" ||
-                    selected.status === "busy" ||
+                    selected.status === "busy" || selected.status === "review" ||
                     activeRun != null && ["queued", "running"].includes(activeRun.status)
                   }
                   rows={3}
@@ -572,7 +610,7 @@ export default function App() {
                     disabled={
                       !prompt.trim() ||
                       selected.status === "stopped" ||
-                      selected.status === "busy" ||
+                      selected.status === "busy" || selected.status === "review" ||
                       (activeRun != null && ["queued", "running"].includes(activeRun.status))
                     }
                     aria-label="Send message"

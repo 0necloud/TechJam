@@ -9,6 +9,7 @@ import type {
   RunnerRequest,
   RunnerResult,
 } from "./types.js";
+import { validateRunPolicy } from "./run-policy.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -55,7 +56,10 @@ export function buildContainerRunArgs(
     "io.codejam.instance-id=" + config.runtimeInstanceId,
     ...(engineName === "podman" ? ["--userns", "keep-id"] : []),
     "--network",
-    "bridge",
+    request.policy.networkMode === "none" ? "none" : "bridge",
+    "--read-only",
+    "--tmpfs",
+    "/tmp:rw,nosuid,nodev,noexec,size=64m",
     "--security-opt",
     "no-new-privileges",
     "--cap-drop",
@@ -79,7 +83,7 @@ export function buildContainerRunArgs(
     "--mount",
     "type=bind,src=" + request.workspacePath + ",dst=/workspace",
     "--mount",
-    "type=bind,src=" + config.codexHome + ",dst=/codex-home",
+    "type=bind,src=" + request.codexHomePath + ",dst=/codex-home",
     "--workdir",
     "/workspace",
     config.containerRuntimeImage,
@@ -138,6 +142,7 @@ export class ContainerCodexRunner implements AgentRunner {
   }
 
   async run(request: RunnerRequest): Promise<RunnerResult> {
+    validateRunPolicy(request, this.config);
     if (this.active.has(request.agentId)) {
       throw new Error("Agent already has an active Runtime container");
     }
@@ -197,10 +202,11 @@ export class ContainerCodexRunner implements AgentRunner {
     child.stdout.on("data", (chunk: Buffer) => consume(chunk, "stdout"));
     child.stderr.on("data", (chunk: Buffer) => consume(chunk, "stderr"));
 
+    const remainingPolicyMs = Date.parse(request.policy.expiresAt) - Date.now();
     const timeout = setTimeout(() => {
       active.timedOut = true;
       void this.removeContainer(active);
-    }, this.config.codexTimeoutMs);
+    }, Math.min(this.config.codexTimeoutMs, request.policy.maxDurationMs, remainingPolicyMs));
     timeout.unref();
 
     try {

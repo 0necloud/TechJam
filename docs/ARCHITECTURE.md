@@ -1,18 +1,19 @@
 # Architecture
 
-Volc Agent Launchpad is a single-node control plane for hackathon use.
+TrustCommit is a single-node transactional Agent control plane for hackathon use.
 
 ```mermaid
 flowchart LR
     UI["React Web UI"] --> API["Fastify API"]
     API --> Service["AgentService"]
     Service --> Store["JSON store"]
-    Service --> Workspace["Agent workspace"]
+    Service --> Transaction["Transaction + change policy"]
+    Transaction --> Workspace["Staging workspace"]
     Service --> Runner{"AgentRunner"}
     Runner -->|Local POC| Container["Disposable Runtime container"]
-    Runner -->|ECS| Process["Codex child process"]
     Container --> Ark["Volcengine Ark"]
-    Process --> Ark
+    Transaction --> Review["Evidence + decision"]
+    Review --> Live["Live workspace"]
 ```
 
 ## Components
@@ -29,14 +30,14 @@ serves the compiled Web UI. The token is not user identity or authorization.
 
 ### AgentService
 
-Coordinates lifecycle state, persistence, workspaces, and Runs. One Agent can
-have only one active Run.
+Coordinates lifecycle state, persistence, staged workspaces, and Runs. One
+Agent can have only one active or review-pending Run.
 
 ```text
-ready -> busy -> ready
-  |       |
-  v       v
-stopped  error
+ready -> busy -> review -> ready
+  |       |        |
+  v       v        v
+stopped  error   stopped
 ```
 
 Interrupted Runs become `cancelled` after a restart.
@@ -47,7 +48,9 @@ Interrupted Runs become `cancelled` after a restart.
 data/launchpad.json       Agent, message, and Run metadata
 workspaces/AgentID/       Agent-created files
 workspaces/.deleted/      Archived deleted workspaces
-codex-home/               Codex configuration and sessions
+workspaces/.transactions/ Per-Run staging workspaces
+workspaces/.rollback/     Recoverable promotion copies
+codex-home/AgentID/       Private Codex configuration and sessions
 ```
 
 `JsonStore` serializes writes and atomically replaces one JSON file. It supports
@@ -55,20 +58,25 @@ one process only.
 
 ### Runtime providers
 
-- `CodexRunner` runs Codex inside the application container for ECS.
 - `ContainerCodexRunner` starts one disposable Docker, Colima, or Podman
-  container for every local turn.
+  container for every guarded turn.
 
-Both providers use argv-only process execution, bound output and time, resume
-the stored Codex thread, and escalate termination after a grace period.
+Guarded execution fails closed instead of falling back to `CodexRunner`. The
+container receives staging and one Agent session home only, a read-only root,
+bounded `/tmp`, resource limits, dropped capabilities, and
+`no-new-privileges`. Approval refuses a changed live digest.
+
+This is Architecture B: Codex acts autonomously inside the Runtime. There is no
+pre-tool interceptor. Bridge egress and the Ark credential inside the Runtime
+remain residual risks until a separately approved gateway exists.
 
 ## Deployment profiles
 
 | Profile | Control plane | Agent execution |
 | --- | --- | --- |
 | Local POC | Host Node.js | Disposable local container |
-| ECS | Application container | Codex process in the same container |
-| Local development | Host Node.js | Host Codex process |
+| ECS / Compose without a container engine | Application container | Guarded Runs fail closed |
+| Local development | Host Node.js | Disposable local container |
 
 ## Extension seams
 
@@ -78,5 +86,5 @@ the stored Codex thread, and escalate termination after a grace period.
 | Bouncer | API routes, Agent ownership | Add identity and server-side authorization. |
 | Kill Switch | `AgentRunner` | Add threat-specific policy or a stronger sandbox. |
 
-The current container or ECS instance is the POC trust boundary. Ordinary
+The disposable Runtime container is the POC execution boundary. Ordinary
 containers are not hardened multi-tenant isolation.
