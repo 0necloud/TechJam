@@ -4,13 +4,13 @@ Use the prompt below when opening the WSL repository in a fresh Codex task.
 
 ---
 
-Implement the complete TrustCommit middleware described in
-`docs/TRUSTCOMMIT_IMPLEMENTATION.md`.
+Implement the complete Airlock middleware described in
+`docs/AIRLOCK_IMPLEMENTATION.md`.
 
 Before editing:
 
 1. Read `AGENTS.md`, `README.md`, `docs/ARCHITECTURE.md`,
-   `docs/HACKATHON_EXTENSION_GUIDE.md`, the TrustCommit specification, and all
+   `docs/HACKATHON_EXTENSION_GUIDE.md`, the Airlock specification, and all
    files under `docs/workstreams/`.
 2. Inspect the existing server, runner, workspace, persistence, tests, and React
    Playground code.

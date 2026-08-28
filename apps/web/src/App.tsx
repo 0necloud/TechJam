@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, setAuthToken } from "./api";
+import { contributions, contributionSummary } from "./contributions";
 import type { Agent, AgentRun, Message, RunEvidence, SystemInfo } from "./types";
 
 const starterPrompts = [
@@ -35,6 +36,37 @@ function Spinner() {
   return <span className="spinner" aria-label="Loading" />;
 }
 
+/**
+ * Wraps one Airlock surface so the "What we built" toggle can number it and
+ * link it to the contribution index. Outside reveal mode this renders nothing
+ * but a plain wrapper, so the product UI is unchanged when the toggle is off.
+ */
+function Surface({
+  id,
+  active,
+  onHover,
+  children,
+}: {
+  id: number;
+  active: number | null;
+  onHover: (id: number | null) => void;
+  children: React.ReactNode;
+}) {
+  const entry = contributions.find((item) => item.id === id);
+  return (
+    <div
+      className={"airlock-surface" + (active === id ? " surface-active" : "")}
+      id={"airlock-surface-" + id}
+      data-contrib={id}
+      data-contrib-label={entry?.title ?? ""}
+      onMouseEnter={() => onHover(id)}
+      onMouseLeave={() => onHover(null)}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function App() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -46,6 +78,18 @@ export default function App() {
   const [prompt, setPrompt] = useState("");
   const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
   const [evidence, setEvidence] = useState<RunEvidence | null>(null);
+  const [reveal, setReveal] = useState(false);
+  const [activeContribution, setActiveContribution] = useState<number | null>(null);
+  // Which numbered surfaces the Playground is currently rendering. The index
+  // marks the rest as "not on screen" instead of pointing at nothing.
+  const visibleSurfaces = useMemo(() => {
+    const visible = new Set<number>();
+    if (!evidence) return visible;
+    for (const id of [1, 2, 5, 6]) visible.add(id);
+    if (evidence.run.status === "awaiting_review") { visible.add(3); visible.add(7); }
+    if (evidence.policyDecision?.rules.length) visible.add(4);
+    return visible;
+  }, [evidence]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
@@ -326,7 +370,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={"app-shell" + (reveal ? " reveal-on" : "")}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">A</div>
@@ -339,6 +383,24 @@ export default function App() {
             </span>
           </div>
         </div>
+
+        <button
+          className={"reveal-toggle" + (reveal ? " on" : "")}
+          onClick={() => setReveal((value) => !value)}
+          aria-pressed={reveal}
+        >
+          <span className="reveal-switch" aria-hidden="true">
+            <span className="reveal-knob" />
+          </span>
+          <span className="reveal-copy">
+            <strong>What we built</strong>
+            <span>
+              {reveal
+                ? "Airlock surfaces highlighted"
+                : contributionSummary.surfaces + " Airlock surfaces"}
+            </span>
+          </span>
+        </button>
 
         <button
           className="button button-primary create-button"
@@ -559,21 +621,41 @@ export default function App() {
                 )}
                 {evidence && (
                   <section className="evidence-panel" aria-label="Run evidence">
-                    <div className="evidence-heading">
-                      <div><span className="eyebrow">TrustCommit evidence</span><h3>{evidence.run.status === "awaiting_review" ? "Changes quarantined for review" : "Run outcome: " + evidence.run.status}</h3></div>
-                      <span className={"risk risk-" + (evidence.policyDecision?.risk ?? "low")}>{evidence.policyDecision?.risk ?? "no-change"} risk</span>
-                    </div>
-                    <div className="policy-facts">
-                      <span>Container Runtime</span><span>Staging-only workspace</span><span>Private Agent session</span><span>{evidence.policy?.networkMode ?? "policy unavailable"}</span>
-                    </div>
-                    {evidence.run.status === "awaiting_review" && <p className="workspace-safe">✓ Live workspace unchanged: {evidence.liveWorkspaceUnchanged ? "confirmed" : "conflict detected"}</p>}
-                    {evidence.policyDecision?.rules.map((rule) => <p className="policy-rule" key={rule.id}><strong>{rule.id}</strong> — {rule.message}</p>)}
-                    <div className="change-list">
-                      {evidence.changes.map((change) => <details key={change.path}><summary><span className={"change-kind kind-" + change.kind}>{change.kind}</span><code>{change.path}</code><small>{change.size} bytes</small></summary>{change.patch && <pre>{change.patch}</pre>}</details>)}
-                      {!evidence.changes.length && <p>No workspace changes were proposed.</p>}
-                    </div>
-                    <ol className="audit-timeline">{evidence.timeline.map((event) => <li key={event.id}><time>{formatTime(event.timestamp)}</time><div><strong>{event.type}</strong><span>{event.summary}</span></div></li>)}</ol>
-                    {evidence.run.status === "awaiting_review" && <div className="decision-actions"><button className="button button-danger" disabled={busy} onClick={() => void decideRun("reject")}>Reject changes</button><button className="button button-primary" disabled={busy || !evidence.liveWorkspaceUnchanged} onClick={() => void decideRun("approve")}>Approve and promote</button></div>}
+                    <Surface id={1} active={activeContribution} onHover={setActiveContribution}>
+                      <div className="evidence-heading">
+                        <div><span className="eyebrow">Airlock evidence</span><h3>{evidence.run.status === "awaiting_review" ? "Changes quarantined for review" : "Run outcome: " + evidence.run.status}</h3></div>
+                        <span className={"risk risk-" + (evidence.policyDecision?.risk ?? "low")}>{evidence.policyDecision?.risk ?? "no-change"} risk</span>
+                      </div>
+                    </Surface>
+                    <Surface id={2} active={activeContribution} onHover={setActiveContribution}>
+                      <div className="policy-facts">
+                        <span>Container Runtime</span><span>Staging-only workspace</span><span>Private Agent session</span><span>{evidence.policy?.networkMode ?? "policy unavailable"}</span>
+                      </div>
+                    </Surface>
+                    {evidence.run.status === "awaiting_review" && (
+                      <Surface id={3} active={activeContribution} onHover={setActiveContribution}>
+                        <p className="workspace-safe">✓ Live workspace unchanged: {evidence.liveWorkspaceUnchanged ? "confirmed" : "conflict detected"}</p>
+                      </Surface>
+                    )}
+                    {evidence.policyDecision?.rules.length ? (
+                      <Surface id={4} active={activeContribution} onHover={setActiveContribution}>
+                        {evidence.policyDecision.rules.map((rule) => <p className="policy-rule" key={rule.id}><strong>{rule.id}</strong> — {rule.message}</p>)}
+                      </Surface>
+                    ) : null}
+                    <Surface id={5} active={activeContribution} onHover={setActiveContribution}>
+                      <div className="change-list">
+                        {evidence.changes.map((change) => <details key={change.path}><summary><span className={"change-kind kind-" + change.kind}>{change.kind}</span><code>{change.path}</code><small>{change.size} bytes</small></summary>{change.patch && <pre>{change.patch}</pre>}</details>)}
+                        {!evidence.changes.length && <p>No workspace changes were proposed.</p>}
+                      </div>
+                    </Surface>
+                    <Surface id={6} active={activeContribution} onHover={setActiveContribution}>
+                      <ol className="audit-timeline">{evidence.timeline.map((event) => <li key={event.id}><time>{formatTime(event.timestamp)}</time><div><strong>{event.type}</strong><span>{event.summary}</span></div></li>)}</ol>
+                    </Surface>
+                    {evidence.run.status === "awaiting_review" && (
+                      <Surface id={7} active={activeContribution} onHover={setActiveContribution}>
+                        <div className="decision-actions"><button className="button button-danger" disabled={busy} onClick={() => void decideRun("reject")}>Reject changes</button><button className="button button-primary" disabled={busy || !evidence.liveWorkspaceUnchanged} onClick={() => void decideRun("approve")}>Approve and promote</button></div>
+                      </Surface>
+                    )}
                   </section>
                 )}
                 <div ref={messageEnd} />
@@ -639,6 +721,75 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {reveal && (
+        <aside className="contribution-index" aria-label="Airlock contribution index">
+          <div className="contribution-head">
+            <span className="eyebrow">Airlock</span>
+            <h2>What we built</h2>
+            <p>
+              Everything highlighted below was added on top of the Volc Agent Launchpad starter
+              kit. Everything greyed out shipped with it.
+            </p>
+            <div className="contribution-stats">
+              <div>
+                <strong>{contributionSummary.newModules}</strong>
+                <span>new modules</span>
+              </div>
+              <div>
+                <strong>{contributionSummary.linesAdded.toLocaleString()}</strong>
+                <span>lines added</span>
+              </div>
+              <div>
+                <strong>{contributionSummary.surfaces}</strong>
+                <span>UI surfaces</span>
+              </div>
+            </div>
+          </div>
+
+          <ol className="contribution-list">
+            {contributions.map((item) => {
+              const onScreen = visibleSurfaces.has(item.id);
+              return (
+                <li
+                  key={item.id}
+                  className={
+                    (activeContribution === item.id ? "active " : "") +
+                    (onScreen ? "" : "offscreen")
+                  }
+                  onMouseEnter={() => setActiveContribution(item.id)}
+                  onMouseLeave={() => setActiveContribution(null)}
+                >
+                  <button
+                    onClick={() =>
+                      document
+                        .getElementById("airlock-surface-" + item.id)
+                        ?.scrollIntoView({ behavior: "smooth", block: "center" })
+                    }
+                  >
+                    <span className="contribution-badge">{item.id}</span>
+                    <span className="contribution-copy">
+                      <strong>{item.title}</strong>
+                      <span className="contribution-blurb">{item.blurb}</span>
+                      <span className="contribution-file">
+                        <code>{item.file}</code>
+                        <em>
+                          {item.isNewFile ? item.lines + " lines · new file" : "+" + item.lines + " lines"}
+                        </em>
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+
+          <p className="contribution-foot">
+            Baseline compared against starter-kit commit <code>{contributionSummary.baselineCommit}</code>.
+            Surfaces marked <em>not on screen</em> appear once a Run finishes.
+          </p>
+        </aside>
+      )}
 
       {showCreate && (
         <div className="modal-backdrop" onMouseDown={() => setShowCreate(false)}>

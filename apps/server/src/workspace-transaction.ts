@@ -20,7 +20,7 @@ function assertChild(parent: string, candidate: string, allowEqual = false): voi
   const target = path.resolve(candidate);
   const relative = path.relative(root, target);
   if ((!allowEqual && relative === "") || relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
-    throw new Error("Managed path escapes its TrustCommit root");
+    throw new Error("Managed path escapes its Airlock root");
   }
 }
 

@@ -1,7 +1,7 @@
-# TrustCommit Agent Launchpad
+# Airlock Agent Launchpad
 
 A capability-scoped transactional Agent Runtime built on Volc Agent Launchpad.
-TrustCommit is the **Kill Switch** hackathon track: Codex works in quarantine,
+Airlock is the **Kill Switch** hackathon track: Codex works in quarantine,
 deterministic policy blocks protected effects, and a human approves safe
 changes before they reach the live workspace.
 
@@ -9,7 +9,7 @@ Run it locally with Docker, Colima, or rootless Podman, or deploy it to
 Volcengine ECS.
 
 > [!WARNING]
-> This remains a single-user proof of concept. TrustCommit adds transaction,
+> This remains a single-user proof of concept. Airlock adds transaction,
 > policy, audit, and container controls, but it is not hardened multi-tenant
 > isolation. Do not use production data or credentials. See [SECURITY.md](SECURITY.md).
 
@@ -133,8 +133,8 @@ For a clean Linux host, follow the
 ## Docker Compose
 
 The legacy single-container Compose profile can serve the control plane and UI,
-but it cannot execute TrustCommit Runs unless that environment provides a
-separate supported container engine. TrustCommit never mounts the Docker socket
+but it cannot execute Airlock Runs unless that environment provides a
+separate supported container engine. Airlock never mounts the Docker socket
 and never falls back to in-process Codex. Use `npm run poc` for the complete
 local acceptance path.
 
@@ -235,11 +235,11 @@ flowchart LR
 
 Only staging and the selected Agent's private Codex home are writable Runtime
 mounts. Approved turns commit both files and the proposed Codex thread;
-rejection resets session state. TrustCommit uses Architecture B: Codex acts
+rejection resets session state. Airlock uses Architecture B: Codex acts
 autonomously, so enforcement occurs at mounts, Runtime lifetime, deterministic
 file policy, and promotion—not through a claimed per-tool interceptor.
 
-## TrustCommit demo
+## Airlock demo
 
 1. On WSL2/Linux with Docker or rootless Podman, run
    `ARK_API_KEY=... ARK_MODEL=... npm run poc`.

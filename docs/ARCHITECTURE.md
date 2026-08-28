@@ -1,6 +1,6 @@
 # Architecture
 
-TrustCommit is a single-node transactional Agent control plane for hackathon use.
+Airlock is a single-node transactional Agent control plane for hackathon use.
 
 ```mermaid
 flowchart LR

@@ -9,7 +9,7 @@ const roots: string[] = [];
 afterEach(async () => { const { rm } = await import("node:fs/promises"); await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
 async function fixture() {
-  const root = await mkdtemp(path.join(tmpdir(), "trustcommit-tx-")); roots.push(root);
+  const root = await mkdtemp(path.join(tmpdir(), "airlock-tx-")); roots.push(root);
   const live = path.join(root, "agent"); await mkdir(live); await writeFile(path.join(live, "main.ts"), "export const value = 1;\n");
   const manager = new WorkspaceTransactionManager(root); await manager.initialize();
   const transaction = await manager.prepare("00000000-0000-4000-8000-000000000001", live);
@@ -53,7 +53,7 @@ describe("WorkspaceTransactionManager", () => {
   });
 
   it("fails closed when the live workspace already contains a symlink", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "trustcommit-tx-")); roots.push(root);
+    const root = await mkdtemp(path.join(tmpdir(), "airlock-tx-")); roots.push(root);
     const live = path.join(root, "agent"); await mkdir(live); await symlink("/etc/passwd", path.join(live, "escape"));
     const manager = new WorkspaceTransactionManager(root); await manager.initialize();
     await expect(manager.prepare("00000000-0000-4000-8000-000000000002", live)).rejects.toThrow("symbolic link");

@@ -1,4 +1,4 @@
-# TrustCommit repository instructions
+# Airlock repository instructions
 
 ## Required context
 
@@ -7,15 +7,15 @@ Before changing application code, read these files completely:
 1. `README.md`
 2. `docs/ARCHITECTURE.md`
 3. `docs/HACKATHON_EXTENSION_GUIDE.md`
-4. `docs/TRUSTCOMMIT_IMPLEMENTATION.md`
+4. `docs/AIRLOCK_IMPLEMENTATION.md`
 5. Every file under `docs/workstreams/`
 
-Treat `docs/TRUSTCOMMIT_IMPLEMENTATION.md` as the source of truth when a
+Treat `docs/AIRLOCK_IMPLEMENTATION.md` as the source of truth when a
 workstream document is less specific.
 
 ## Current state
 
-- TrustCommit application code has not been implemented yet.
+- Airlock application code has not been implemented yet.
 - The added files under `docs/workstreams/` are planning documents only.
 - The last Windows `npm run check` attempt stopped before compilation because
   dependencies were not installed.

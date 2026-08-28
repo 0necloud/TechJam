@@ -1119,3 +1119,351 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Airlock "What we built" reveal ─────────────────────────────────────────
+   Product purple belongs to the starter kit and desaturates with it, so Airlock
+   claims a teal that appears nowhere else in the product. Marking is never
+   colour alone: every highlighted surface also carries a number and a label. */
+
+:root {
+  --airlock: #0f7d8c;
+  --airlock-bright: #17b3c6;
+  --airlock-wash: #effbfc;
+  --airlock-line: #b6e4ea;
+}
+
+.reveal-toggle {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 11px 12px;
+  border: 1px solid #3a3a35;
+  border-radius: 11px;
+  background: #2c2c28;
+  color: #f5f3ed;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.reveal-toggle:hover {
+  border-color: var(--airlock);
+}
+
+.reveal-toggle:focus-visible {
+  outline: 2px solid var(--airlock-bright);
+  outline-offset: 2px;
+}
+
+.reveal-toggle.on {
+  border-color: var(--airlock-bright);
+  background: linear-gradient(180deg, rgba(23, 179, 198, 0.16), rgba(23, 179, 198, 0.06));
+}
+
+.reveal-switch {
+  flex: none;
+  width: 34px;
+  height: 20px;
+  padding: 2px;
+  border-radius: 999px;
+  background: #4a4a44;
+  transition: background 160ms ease;
+}
+
+.reveal-toggle.on .reveal-switch {
+  background: var(--airlock-bright);
+}
+
+.reveal-knob {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f5f3ed;
+  transition: transform 160ms ease;
+}
+
+.reveal-toggle.on .reveal-knob {
+  transform: translateX(14px);
+}
+
+.reveal-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.reveal-copy strong {
+  font-size: 13px;
+}
+
+.reveal-copy span {
+  color: #a4a49c;
+  font-size: 11px;
+}
+
+.reveal-toggle.on .reveal-copy span {
+  color: var(--airlock-bright);
+}
+
+/* Baseline surfaces recede. Listed explicitly rather than applied to an
+   ancestor, because a parent filter cannot be undone by a child. */
+.app-shell.reveal-on .brand,
+.app-shell.reveal-on .create-button,
+.app-shell.reveal-on .sidebar-label,
+.app-shell.reveal-on .agent-list,
+.app-shell.reveal-on .runtime-card,
+.app-shell.reveal-on .config-banner,
+.app-shell.reveal-on .agent-header,
+.app-shell.reveal-on .settings-panel,
+.app-shell.reveal-on .playground-topbar,
+.app-shell.reveal-on .welcome,
+.app-shell.reveal-on .message,
+.app-shell.reveal-on .run-error,
+.app-shell.reveal-on .composer,
+.app-shell.reveal-on .no-agent {
+  filter: grayscale(1);
+  opacity: 0.38;
+  transition: opacity 180ms ease, filter 180ms ease;
+}
+
+.airlock-surface {
+  position: relative;
+  transition: box-shadow 180ms ease, background 180ms ease;
+}
+
+.app-shell.reveal-on .airlock-surface {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--airlock-wash);
+  box-shadow: 0 0 0 2px var(--airlock-line);
+}
+
+.app-shell.reveal-on .airlock-surface::before {
+  content: attr(data-contrib);
+  position: absolute;
+  top: -11px;
+  left: -11px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--airlock);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 2px 6px rgba(15, 125, 140, 0.35);
+}
+
+.app-shell.reveal-on .airlock-surface::after {
+  content: attr(data-contrib-label);
+  position: absolute;
+  top: -10px;
+  left: 18px;
+  padding: 2px 8px 2px 12px;
+  border-radius: 0 999px 999px 0;
+  background: var(--airlock);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.app-shell.reveal-on .airlock-surface.surface-active {
+  background: #ffffff;
+  box-shadow: 0 0 0 3px var(--airlock-bright), 0 12px 28px rgba(15, 125, 140, 0.18);
+}
+
+/* Contribution index ------------------------------------------------------ */
+
+.app-shell.reveal-on {
+  grid-template-columns: 276px minmax(0, 1fr) 340px;
+}
+
+.contribution-index {
+  min-height: 100vh;
+  padding: 24px 20px 32px;
+  border-left: 1px solid var(--airlock-line);
+  background: var(--airlock-wash);
+  overflow-y: auto;
+  max-height: 100vh;
+}
+
+.contribution-head .eyebrow {
+  color: var(--airlock);
+}
+
+.contribution-head h2 {
+  margin: 4px 0 8px;
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  font-size: 21px;
+  letter-spacing: -0.035em;
+}
+
+.contribution-head p {
+  margin: 0;
+  color: #4c6b70;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.contribution-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 16px 0 20px;
+}
+
+.contribution-stats div {
+  padding: 9px 8px;
+  border: 1px solid var(--airlock-line);
+  border-radius: 10px;
+  background: #ffffff;
+  text-align: center;
+}
+
+.contribution-stats strong {
+  display: block;
+  color: var(--airlock);
+  font-size: 17px;
+}
+
+.contribution-stats span {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.contribution-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.contribution-list button {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 11px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.contribution-list li.active button {
+  border-color: var(--airlock-bright);
+  transform: translateX(-3px);
+}
+
+.contribution-list button:focus-visible {
+  outline: 2px solid var(--airlock-bright);
+  outline-offset: 2px;
+}
+
+.contribution-list li.offscreen button {
+  opacity: 0.62;
+}
+
+.contribution-badge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--airlock);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.contribution-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.contribution-copy > strong {
+  font-size: 13px;
+}
+
+.contribution-blurb {
+  color: #4c6b70;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.contribution-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.contribution-file code {
+  color: var(--airlock);
+  font-size: 10px;
+  word-break: break-all;
+}
+
+.contribution-file em {
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.contribution-list li.offscreen .contribution-copy > strong::after {
+  content: " · not on screen";
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.contribution-foot {
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+@media (max-width: 1240px) {
+  .app-shell.reveal-on {
+    grid-template-columns: 276px minmax(0, 1fr);
+  }
+
+  .contribution-index {
+    grid-column: 1 / -1;
+    min-height: 0;
+    max-height: none;
+    border-left: 0;
+    border-top: 1px solid var(--airlock-line);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-toggle,
+  .reveal-switch,
+  .reveal-knob,
+  .airlock-surface,
+  .contribution-list button,
+  .app-shell.reveal-on .brand,
+  .app-shell.reveal-on .agent-list,
+  .app-shell.reveal-on .message {
+    transition: none;
+  }
+}

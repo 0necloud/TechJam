@@ -288,7 +288,7 @@ export class AgentService {
       if (this.cancellationRequests.has(agentAtStart.id)) {
         throw new RunCancelledError();
       }
-      if (this.config.runtimeProvider !== "container") throw new Error("TrustCommit guarded Runs require RUNTIME_PROVIDER=container");
+      if (this.config.runtimeProvider !== "container") throw new Error("Airlock guarded Runs require RUNTIME_PROVIDER=container");
       transaction = await this.transactions.prepare(run.id, agentAtStart.workspacePath);
       const codexHomePath = await ensureAgentCodexHome(this.config, agentAtStart.id);
       const activeRun = this.getRun(run.id);

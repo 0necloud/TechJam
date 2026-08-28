@@ -12,7 +12,7 @@ const roots: string[] = [];
 afterEach(async () => { const { rm } = await import("node:fs/promises"); await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
 async function setup(write: (request: RunnerRequest) => Promise<void>) {
-  const root = await mkdtemp(path.join(tmpdir(), "trustcommit-service-")); roots.push(root);
+  const root = await mkdtemp(path.join(tmpdir(), "airlock-service-")); roots.push(root);
   const config = loadConfig({ NODE_ENV: "test", APP_DATA_DIR: path.join(root, "data"), AGENT_WORKSPACE_ROOT: path.join(root, "workspaces"), CODEX_HOME: path.join(root, "codex"), ARK_API_KEY: "fixture-key", ARK_MODEL: "fixture-model", RUNTIME_PROVIDER: "container" });
   await writeCodexConfig(config);
   const requests: RunnerRequest[] = [];
@@ -25,7 +25,7 @@ async function setup(write: (request: RunnerRequest) => Promise<void>) {
 
 async function waitFor(service: AgentService, runId: string, status: string) { await expect.poll(() => service.getRun(runId).status).toBe(status); }
 
-describe("TrustCommit service integration", () => {
+describe("Airlock service integration", () => {
   it("stages safe changes, preserves live files, and promotes only on approval", async () => {
     const { service, agent, requests } = await setup(async (request) => writeFile(path.join(request.workspacePath, "safe.ts"), "export {};\n"));
     const { run } = await service.sendMessage(agent.id, "make a safe file"); await waitFor(service, run.id, "awaiting_review");

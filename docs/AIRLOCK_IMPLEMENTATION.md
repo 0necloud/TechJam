@@ -1,7 +1,7 @@
-# TrustCommit: Capability-Scoped Transactional Agent Runtime
+# Airlock: Capability-Scoped Transactional Agent Runtime
 
 > Implementation handover status (2026-08-27): no application code has been
-> changed for TrustCommit. The repository currently contains planning documents
+> changed for Airlock. The repository currently contains planning documents
 > under `docs/workstreams/`. The last Windows validation attempt stopped before
 > compilation because dependencies were not installed. Full implementation and
 > Runtime acceptance should be performed in WSL2/Linux.

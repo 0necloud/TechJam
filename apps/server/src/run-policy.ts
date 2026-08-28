@@ -21,7 +21,7 @@ function isChild(parent: string, candidate: string): boolean {
 
 export function validateRunPolicy(request: RunnerRequest, config: AppConfig): void {
   const policy = request.policy;
-  if (config.runtimeProvider !== "container") throw new Error("TrustCommit guarded Runs require the container Runtime");
+  if (config.runtimeProvider !== "container") throw new Error("Airlock guarded Runs require the container Runtime");
   if (policy.runId !== request.runId || policy.agentId !== request.agentId) throw new Error("Run policy identity mismatch");
   if (policy.runtime !== "container" || policy.workspaceAccess !== "staging-only" || policy.sessionAccess !== "agent-only") throw new Error("Unsupported Run policy capability");
   if (policy.revokedAt) throw new Error("Run policy has been revoked");
