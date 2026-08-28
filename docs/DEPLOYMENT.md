@@ -9,6 +9,25 @@ Both profiles require a Volcengine Ark API key and a Responses-capable endpoint.
 
 ## Existing Linux ECS
 
+> [!IMPORTANT]
+> Use `scripts/deploy-host.sh`, not the Docker Compose profile. Airlock Runs
+> execute in disposable Runtime containers that the control plane launches over
+> the Docker CLI, so the control plane must run as a **host process** with
+> access to the Docker daemon. Inside the Compose container there is no daemon,
+> and `RUNTIME_PROVIDER=local-process` is refused by `validateRunPolicy` — every
+> Run fails closed with "Airlock guarded Runs require RUNTIME_PROVIDER=container".
+> Airlock never mounts the Docker socket to work around this.
+>
+> ```bash
+> cp .env.example .env.production   # set ARK_API_KEY, ARK_MODEL, APP_AUTH_TOKEN
+> sudo ./scripts/deploy-host.sh .env.production
+> ```
+>
+> The script installs Docker and Node.js 22, builds the Runtime image, creates
+> an `airlock` service account in the `docker` group, and runs the control plane
+> under systemd on port 3000. `APP_AUTH_TOKEN` must be 24+ characters because the
+> server listens beyond loopback.
+
 Recommended host:
 
 - Ubuntu 22.04/24.04, Debian 12, or veLinux 2
