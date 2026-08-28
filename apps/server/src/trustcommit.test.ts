@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -53,6 +53,19 @@ describe("TrustCommit service integration", () => {
     const evidence = await service.getRunEvidence(run.id);
     expect(evidence.policyDecision?.rules.map((rule) => rule.id)).toContain("TC002");
     expect(JSON.stringify(evidence)).not.toContain("super-secret-value");
+    expect(service.getAgent(agent.id).status).toBe("ready");
+  });
+
+  it("denies a protected file hidden below the workspace root", async () => {
+    const { service, agent } = await setup(async (request) => {
+      await mkdir(path.join(request.workspacePath, "config"), { recursive: true });
+      await writeFile(path.join(request.workspacePath, "config", ".env"), "DEBUG=true\nDATABASE_URL=postgres://user@host/db\n");
+    });
+    const { run } = await service.sendMessage(agent.id, "add a nested config file"); await waitFor(service, run.id, "rejected");
+    await expect(readFile(path.join(agent.workspacePath, "config", ".env"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    const evidence = await service.getRunEvidence(run.id);
+    expect(evidence.policyDecision?.rules.map((rule) => rule.id)).toContain("TC002");
+    expect(evidence.policyDecision?.rules.find((rule) => rule.id === "TC002")?.paths).toEqual(["config/.env"]);
     expect(service.getAgent(agent.id).status).toBe("ready");
   });
 

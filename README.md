@@ -247,6 +247,9 @@ file policy, and promotion—not through a claimed per-tool interceptor.
    says the live workspace is unchanged, then approve the proposed changes.
 3. Ask it to create a dummy `.env`. Rule `TC002` denies promotion and the live
    workspace stays unchanged.
+4. Ask it to create `config/.env` instead. Protected names are matched on every
+   path segment, so `TC002` denies the nested copy too, and the evidence panel
+   names the offending path.
 
 Middleware development uses deterministic fake runners and needs no model:
 

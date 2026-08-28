@@ -243,14 +243,21 @@ evaluateChanges(changes: FileChange[]): PolicyDecision
 
 Reject changes involving:
 
-- `.env` or `.env.*`
-- `.codex/**`
-- `.git/**`
-- Platform-managed `AGENTS.md`
+- `**/.env` or `**/.env.*`
+- `**/.codex/**`
+- `**/.git/**`
+- Platform-managed `**/AGENTS.md`
 - Paths containing traversal outside the workspace
 - Symbolic links
 - Credential-like content
 - Files exceeding configured limits
+
+Protected names are matched on every path segment rather than only at the
+workspace root. A nested `config/.env` leaks the same secrets as a root one, a
+nested `vendor/.git/hooks/pre-commit` still executes on the operator's next
+commit, and Codex reads `AGENTS.md` from every directory it walks, so a nested
+copy persists instructions into later turns. Matching is case-insensitive so a
+denial does not depend on host filesystem case-folding rules.
 
 ### Human review
 
