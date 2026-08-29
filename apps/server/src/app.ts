@@ -23,6 +23,14 @@ const messageBody = z.object({
   content: z.string().trim().min(1).max(50_000),
 });
 const decisionBody = z.object({ decision: z.enum(["approve", "reject"]), reason: z.string().trim().max(1_000).optional() });
+const ingressSettingsBody = z
+  .object({
+    clearance: z.enum(["public", "internal", "confidential", "restricted"]).optional(),
+    enforcement: z.enum(["off", "audit", "enforce"]).optional(),
+    promptSecrets: z.enum(["redact", "deny"]).optional(),
+    adjudicator: z.enum(["off", "ark"]).optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, "At least one setting is required");
 
 export async function createApp(
   config: AppConfig,
@@ -72,6 +80,13 @@ export async function createApp(
   app.get("/api/auth", async () => ({ required: config.authToken.length > 0 }));
 
   app.get("/api/system", async () => service.systemInfo());
+
+  app.get("/api/settings/ingress", async () => ({ settings: service.getIngressSettings() }));
+
+  app.patch("/api/settings/ingress", async (request) => {
+    const body = ingressSettingsBody.parse(request.body);
+    return { settings: await service.updateIngressSettings(body) };
+  });
 
   app.get("/api/agents", async () => ({ agents: service.listAgents() }));
 

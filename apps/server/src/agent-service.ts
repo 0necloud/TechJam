@@ -12,6 +12,9 @@ import type {
   Message,
   UpdateAgentInput,
   RunEvidence,
+  IngressOptions,
+  IngressSettings,
+  IngressSettingsView,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
 import { WorkspaceTransactionManager } from "./workspace-transaction.js";
@@ -23,6 +26,31 @@ import { createIngressAdjudicator, type IngressAdjudicator } from "./ingress-adj
 import { auditEvent, redact } from "./audit-recorder.js";
 
 const now = () => new Date().toISOString();
+
+// Ordered weakest-to-strongest. A move down any of these ladders reduces
+// protection and is flagged in the settings log.
+const STRENGTH: Record<string, string[]> = {
+  clearance: ["restricted", "confidential", "internal", "public"],
+  enforcement: ["off", "audit", "enforce"],
+  promptSecrets: ["redact", "deny"],
+  adjudicator: ["off", "ark"],
+};
+
+/**
+ * Drops keys whose value is undefined so an override object can be spread over
+ * a fully-populated one without widening its required fields to undefined.
+ */
+function definedOnly(value: IngressSettings): Partial<IngressOptions> {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as Partial<IngressOptions>;
+}
+
+function weakensControl(field: string, from: string, to: string): boolean {
+  const ladder = STRENGTH[field];
+  if (!ladder) return false;
+  const before = ladder.indexOf(from);
+  const after = ladder.indexOf(to);
+  return before >= 0 && after >= 0 && after < before;
+}
 
 export class AgentService {
   private readonly activeExecutions = new Map<string, Promise<void>>();
@@ -44,7 +72,51 @@ export class AgentService {
 
   /** Null when the model-backed half of the gate is switched off. */
   private get activeAdjudicator(): IngressAdjudicator | null {
+    if (this.ingressOptions.adjudicator === "off") return null;
     return this.adjudicator.name === "off" ? null : this.adjudicator;
+  }
+
+  /** Environment defaults with any operator override layered on top. */
+  private get ingressOptions(): IngressOptions {
+    return { ...this.config.ingress, ...definedOnly(this.store.snapshot().settings.ingress) };
+  }
+
+  getIngressSettings(): IngressSettingsView {
+    const database = this.store.snapshot();
+    return {
+      effective: { ...this.config.ingress, ...definedOnly(database.settings.ingress) },
+      overrides: database.settings.ingress,
+      defaults: this.config.ingress,
+      log: database.settingsLog.slice(-40).reverse(),
+    };
+  }
+
+  /**
+   * Applies an operator override to the gate. Weakening a control here is
+   * allowed — an operator may legitimately need a Run to read restricted
+   * material — but it is never silent: every change is recorded, and the ones
+   * that reduce protection are flagged in the log the evidence panel reads.
+   */
+  async updateIngressSettings(patch: IngressSettings): Promise<IngressSettingsView> {
+    const before = this.ingressOptions;
+    await this.store.mutate((database) => {
+      const timestamp = now();
+      for (const [field, value] of Object.entries(patch) as [keyof IngressSettings, string][]) {
+        const from = String(before[field]);
+        if (value === undefined || String(value) === from) continue;
+        database.settings.ingress = { ...database.settings.ingress, [field]: value };
+        database.settingsLog.push({
+          id: randomUUID(),
+          at: timestamp,
+          field,
+          from,
+          to: String(value),
+          weakens: weakensControl(field, from, String(value)),
+        });
+      }
+      database.settingsLog = database.settingsLog.slice(-200);
+    });
+    return this.getIngressSettings();
   }
 
   async initialize(): Promise<void> {
@@ -210,7 +282,7 @@ export class AgentService {
     // Ingress point 1: judge the request before anything is staged. A pasted
     // credential is stripped (or refused) here so it never reaches the Runtime,
     // the transcript, or the audit record.
-    const promptScreen = screenPrompt(prompt, this.config.ingress);
+    const promptScreen = screenPrompt(prompt, this.ingressOptions);
     if (promptScreen.outcome === "denied") {
       throw new HttpError(400, "Prompt rejected by the Airlock ingress gate: " + promptScreen.rules.map((rule) => rule.id + " " + rule.message).join(" "));
     }
@@ -286,7 +358,7 @@ export class AgentService {
       arkModel: this.config.arkModel || null,
       codexAvailable: await this.runner.isAvailable(),
       codexSandboxMode: this.config.codexSandboxMode,
-      ingress: this.config.ingress,
+      ingress: this.ingressOptions,
       runtimeProvider: this.config.runtimeProvider,
       containerEngine:
         this.config.runtimeProvider === "container"
@@ -321,14 +393,14 @@ export class AgentService {
       // and pull anything above the resulting clearance back out. This is the
       // last moment a read can be stopped — after the mount exists, Codex reads
       // it with plain syscalls.
-      const ingress = await screenWorkspace(transaction.stagingPath, this.transactions.withheldRoot(transaction), this.config.ingress, {
+      const ingress = await screenWorkspace(transaction.stagingPath, this.transactions.withheldRoot(transaction), this.ingressOptions, {
         adjudicator: this.activeAdjudicator,
         networkMode: activeRun.policy?.networkMode ?? "current-bridge",
         untrustedPrompt: activeRun.promptScreen?.untrustedReferences ?? [],
       });
       // The prompt judgement is advisory and must never fail the Run, so an
       // unreachable model is recorded rather than propagated.
-      const promptJudgement = await adjudicatePrompt(run.prompt, this.config.ingress, this.activeAdjudicator).catch(() => {
+      const promptJudgement = await adjudicatePrompt(run.prompt, this.ingressOptions, this.activeAdjudicator).catch(() => {
         ingress.adjudicationErrors += 1;
         return null;
       });

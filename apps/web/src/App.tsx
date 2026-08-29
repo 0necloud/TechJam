@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, setAuthToken } from "./api";
 import { contributions, contributionSummary } from "./contributions";
-import type { Agent, AgentRun, Capability, IngressDecision, Message, PromptScreen, RunEvidence, StopReason, SystemInfo, TrifectaDecision } from "./types";
+import type { Agent, AgentRun, Capability, IngressDecision, IngressSettings, IngressSettingsView, Message, ObservedFile, PromptScreen, RunEvidence, StopReason, SystemInfo, TrifectaDecision } from "./types";
 
 const starterPrompts = [
   "Create a small TypeScript CLI that prints a weather summary from sample JSON.",
@@ -49,6 +49,189 @@ const STOP_REASON_LABEL: Record<StopReason, string> = {
   budget: "stopped at the inspection budget",
   complete: "read in full",
 };
+
+const CLEARANCE_HINT: Record<string, string> = {
+  public: "Only unclassified content reaches the Runtime.",
+  internal: "Internal material is readable; confidential and above is withheld.",
+  confidential: "Confidential material is readable; only restricted is withheld.",
+  restricted: "Everything is readable, including credential files.",
+};
+
+/**
+ * Operator controls for the gate.
+ *
+ * Weakening a control from here is allowed — sometimes a Run genuinely needs to
+ * read restricted material — but the server records every change and flags the
+ * ones that reduce protection, so the panel says so plainly rather than letting
+ * a quiet toggle undo the whole thing.
+ */
+function IngressControls({ settings, onChange, busy }: { settings: IngressSettingsView; onChange: (patch: IngressSettings) => void; busy: boolean }) {
+  const { effective, defaults, log } = settings;
+  const overridden = (field: keyof IngressSettings) => settings.overrides[field] !== undefined && settings.overrides[field] !== defaults[field];
+  const weakened = log.filter((entry) => entry.weakens);
+
+  return (
+    <div className="ingress-controls">
+      <div className="controls-head">
+        <span className="eyebrow">Ingress gate</span>
+        <span className={"gate-state gate-" + effective.enforcement}>{effective.enforcement}</span>
+      </div>
+
+      <label className="control">
+        <span>Enforcement{overridden("enforcement") && <em> overridden</em>}</span>
+        <select value={effective.enforcement} disabled={busy} onChange={(event) => onChange({ enforcement: event.target.value as IngressSettings["enforcement"] })}>
+          <option value="enforce">enforce — withhold above clearance</option>
+          <option value="audit">audit — record only, withhold nothing</option>
+          <option value="off">off — no screening at all</option>
+        </select>
+      </label>
+
+      <label className="control">
+        <span>Run clearance{overridden("clearance") && <em> overridden</em>}</span>
+        <select value={effective.clearance} disabled={busy || effective.enforcement === "off"} onChange={(event) => onChange({ clearance: event.target.value as IngressSettings["clearance"] })}>
+          <option value="public">public</option>
+          <option value="internal">internal</option>
+          <option value="confidential">confidential</option>
+          <option value="restricted">restricted</option>
+        </select>
+        <small>{CLEARANCE_HINT[effective.clearance]}</small>
+      </label>
+
+      <label className="control">
+        <span>Pasted credentials{overridden("promptSecrets") && <em> overridden</em>}</span>
+        <select value={effective.promptSecrets} disabled={busy || effective.enforcement === "off"} onChange={(event) => onChange({ promptSecrets: event.target.value as IngressSettings["promptSecrets"] })}>
+          <option value="redact">redact — strip and continue</option>
+          <option value="deny">deny — refuse the Run</option>
+        </select>
+      </label>
+
+      <label className="control">
+        <span>Adjudicator{overridden("adjudicator") && <em> overridden</em>}</span>
+        <select value={effective.adjudicator} disabled={busy || effective.enforcement === "off"} onChange={(event) => onChange({ adjudicator: event.target.value as IngressSettings["adjudicator"] })}>
+          <option value="off">off — deterministic rules only</option>
+          <option value="ark">ark — model judges unmarked documents</option>
+        </select>
+        {effective.adjudicator === "ark" && <small>Sends bounded, secret-redacted excerpts of staged files to the model.</small>}
+      </label>
+
+      {effective.enforcement === "off" && (
+        <p className="gate-warning">Screening is disabled. Nothing is classified and nothing is withheld.</p>
+      )}
+      {weakened.length > 0 && (
+        <details className="settings-log">
+          <summary>{weakened.length} change(s) reduced protection</summary>
+          <ul>
+            {log.map((entry) => (
+              <li key={entry.id} className={entry.weakens ? "log-weaken" : ""}>
+                <code>{entry.field}</code> {entry.from} → {entry.to}
+                <time>{formatTime(entry.at)}</time>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+const STOP_VERDICT: Record<StopReason, string> = {
+  "name-only": "stopped before opening the file",
+  "metadata-only": "stopped after the document properties",
+  signal: "stopped at the first signal",
+  budget: "stopped at the inspection budget",
+  complete: "read to the end",
+};
+
+/**
+ * Replays one file's classification as a tape that fills and then halts.
+ *
+ * The claim this makes has to be exact: it is the gate's classifier that stops,
+ * not the Agent. The Agent never reads a withheld file at all. So the tape is
+ * labelled "the gate read" and the recorded `bytesInspected` is the only number
+ * animated — nothing here is simulated.
+ */
+function ReadTape({ file, playing, onDone }: { file: ObservedFile; playing: boolean; onDone: () => void }) {
+  const target = file.size > 0 ? Math.min(100, (file.bytesInspected / file.size) * 100) : 0;
+  const [width, setWidth] = useState(0);
+  const [halted, setHalted] = useState(false);
+
+  useEffect(() => {
+    if (!playing) return;
+    setWidth(0);
+    setHalted(false);
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced || target === 0) {
+      setWidth(target);
+      setHalted(true);
+      const done = window.setTimeout(onDone, 260);
+      return () => window.clearTimeout(done);
+    }
+    // A timer rather than requestAnimationFrame: rAF is paused while the tab is
+    // hidden, which would leave the tape stuck at zero for anyone who switched
+    // away and back.
+    const start = window.setTimeout(() => setWidth(target), 20);
+    const stop = window.setTimeout(() => setHalted(true), 620);
+    const done = window.setTimeout(onDone, 900);
+    return () => {
+      window.clearTimeout(start);
+      window.clearTimeout(stop);
+      window.clearTimeout(done);
+    };
+  }, [playing, target, onDone]);
+
+  const withheld = file.level !== "public";
+  return (
+    <li className={"tape" + (playing ? " tape-active" : "") + (halted ? " tape-halted" : "")}>
+      <div className="tape-head">
+        <code>{file.path}</code>
+        <span className={"level level-" + file.level}>{file.level}</span>
+      </div>
+      <div className="tape-track">
+        <span className="tape-fill" style={{ width: width + "%" }} />
+        {halted && target < 99.5 && <span className="tape-stop" style={{ left: width + "%" }} aria-hidden="true" />}
+      </div>
+      <p className="tape-label">
+        <span className="tape-bytes">{file.bytesInspected.toLocaleString()} of {file.size.toLocaleString()} B</span>
+        {halted && (
+          <span className={halted && withheld ? "tape-verdict tape-verdict-stop" : "tape-verdict"}>
+            {STOP_VERDICT[file.stopReason]}
+            {withheld ? " · withheld" : ""}
+          </span>
+        )}
+      </p>
+    </li>
+  );
+}
+
+/**
+ * Plays the recorded classifications back one at a time so a viewer can watch
+ * each read halt. Replay, not live: the gate finishes in milliseconds, and the
+ * numbers shown are the ones the Run actually recorded.
+ */
+function ReadReplay({ observed }: { observed: ObservedFile[] }) {
+  const [cursor, setCursor] = useState(-1);
+  const advance = useCallback(() => setCursor((current) => (current + 1 < observed.length ? current + 1 : -1)), [observed.length]);
+  const running = cursor >= 0;
+
+  return (
+    <div className="read-replay">
+      <div className="replay-head">
+        <div>
+          <span className="eyebrow">Read trace</span>
+          <p className="replay-note">Replay of what the gate recorded. The Agent never read these files.</p>
+        </div>
+        <button type="button" className="button button-quiet" onClick={() => setCursor(running ? -1 : 0)}>
+          {running ? "Stop" : "Replay reads"}
+        </button>
+      </div>
+      <ul className="tape-list">
+        {observed.map((file, index) => (
+          <ReadTape key={file.path} file={file} playing={cursor === index} onDone={advance} />
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 const CAPABILITY_LABEL: Record<Capability, string> = {
   "private-data": "Private data",
@@ -164,6 +347,8 @@ function IngressGate({ ingress, promptScreen, activeContribution, onHoverSurface
         <p className="workspace-safe">✓ Nothing above clearance reached the Runtime.</p>
       )}
 
+      {ingress.observed.length > 0 && <ReadReplay observed={ingress.observed} />}
+
       {ingress.observed.length > 0 && (
         <details className="ingress-observed">
           <summary>{ingress.observed.length} classified file(s)</summary>
@@ -238,6 +423,8 @@ export default function App() {
     if (evidence.policyDecision?.rules.length) visible.add(4);
     return visible;
   }, [evidence]);
+  const [ingressSettings, setIngressSettings] = useState<IngressSettingsView | null>(null);
+  const [settingsBusy, setSettingsBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
@@ -271,7 +458,7 @@ export default function App() {
   }, []);
 
   const bootstrap = useCallback(async () => {
-    await Promise.all([refreshAgents(), api.system().then(setSystem)]);
+    await Promise.all([refreshAgents(), api.system().then(setSystem), api.ingressSettings().then((result) => setIngressSettings(result.settings))]);
   }, [refreshAgents]);
 
   useEffect(() => {
@@ -327,6 +514,19 @@ export default function App() {
   useEffect(() => {
     messageEnd.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, activeRun]);
+
+  const changeIngressSettings = async (patch: IngressSettings) => {
+    setSettingsBusy(true);
+    setError(null);
+    try {
+      const result = await api.updateIngressSettings(patch);
+      setIngressSettings(result.settings);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
 
   const createAgent = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -595,6 +795,10 @@ export default function App() {
             {system?.containerEngine ? " · " + system.containerEngine : ""}
           </span>
         </div>
+
+        {ingressSettings && (
+          <IngressControls settings={ingressSettings} onChange={(patch) => void changeIngressSettings(patch)} busy={settingsBusy} />
+        )}
       </aside>
 
       <main className="main">

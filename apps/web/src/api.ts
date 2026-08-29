@@ -1,4 +1,4 @@
-import type { Agent, AgentRun, Message, RunEvidence, SystemInfo } from "./types";
+import type { Agent, AgentRun, IngressSettings, IngressSettingsView, Message, RunEvidence, SystemInfo } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -77,6 +77,8 @@ export const api = {
         body: JSON.stringify({ content }),
       },
     ),
+  ingressSettings: () => request<{ settings: IngressSettingsView }>("/api/settings/ingress"),
+  updateIngressSettings: (body: IngressSettings) => request<{ settings: IngressSettingsView }>("/api/settings/ingress", { method: "PATCH", body: JSON.stringify(body) }),
   run: (id: string) => request<{ run: AgentRun }>("/api/runs/" + id),
   evidence: (id: string) => request<{ evidence: RunEvidence }>("/api/runs/" + id + "/evidence"),
   decide: (id: string, decision: "approve" | "reject", reason?: string) => request<{ run: AgentRun }>("/api/runs/" + id + "/decision", { method: "POST", body: JSON.stringify({ decision, ...(reason ? { reason } : {}) }) }),

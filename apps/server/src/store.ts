@@ -3,10 +3,12 @@ import path from "node:path";
 import type { Database } from "./types.js";
 
 const emptyDatabase = (): Database => ({
-  version: 3,
+  version: 4,
   agents: [],
   messages: [],
   runs: [],
+  settings: { ingress: {} },
+  settingsLog: [],
 });
 
 export class JsonStore {
@@ -20,11 +22,11 @@ export class JsonStore {
     try {
       const raw = await readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw) as Database & { version: number };
-      if (![1, 2, 3].includes(parsed.version) || !Array.isArray(parsed.agents)) {
+      if (![1, 2, 3, 4].includes(parsed.version) || !Array.isArray(parsed.agents)) {
         throw new Error("Unsupported database format");
       }
       this.data = this.migrate(parsed);
-      if (parsed.version !== 3) await this.persist(this.data);
+      if (parsed.version !== 4) await this.persist(this.data);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;
@@ -35,8 +37,10 @@ export class JsonStore {
 
   private migrate(parsed: Database & { version: number }): Database {
     return {
-      version: 3,
+      version: 4,
       agents: parsed.agents,
+      settings: { ingress: parsed.settings?.ingress ?? {} },
+      settingsLog: Array.isArray(parsed.settingsLog) ? parsed.settingsLog : [],
       messages: Array.isArray(parsed.messages) ? parsed.messages : [],
       runs: (Array.isArray(parsed.runs) ? parsed.runs : []).map((run) => ({
         ...run,

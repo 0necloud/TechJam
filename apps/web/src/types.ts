@@ -67,3 +67,9 @@ export interface SystemInfo {
   containerEngine: string | null;
   runtime: string;
 }
+
+export type IngressEnforcement = "off" | "audit" | "enforce";
+export interface IngressOptions { clearance: SensitivityLevel; enforcement: IngressEnforcement; maxBytesPerFile: number; promptSecrets: "redact" | "deny"; adjudicator: "off" | "ark"; adjudicatorMaxFiles: number; adjudicatorExcerptBytes: number; adjudicatorTimeoutMs: number }
+export interface IngressSettings { clearance?: SensitivityLevel; enforcement?: IngressEnforcement; promptSecrets?: "redact" | "deny"; adjudicator?: "off" | "ark" }
+export interface SettingsChange { id: string; at: string; field: string; from: string; to: string; weakens: boolean }
+export interface IngressSettingsView { effective: IngressOptions; overrides: IngressSettings; defaults: IngressOptions; log: SettingsChange[] }

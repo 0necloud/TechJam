@@ -14,7 +14,7 @@ afterEach(async () => { const { rm } = await import("node:fs/promises"); await P
 
 async function setup(write: (request: RunnerRequest) => Promise<void>, adjudicator?: IngressAdjudicator) {
   const root = await mkdtemp(path.join(tmpdir(), "airlock-service-")); roots.push(root);
-  const config = loadConfig({ NODE_ENV: "test", APP_DATA_DIR: path.join(root, "data"), AGENT_WORKSPACE_ROOT: path.join(root, "workspaces"), CODEX_HOME: path.join(root, "codex"), ARK_API_KEY: "fixture-key", ARK_MODEL: "fixture-model", RUNTIME_PROVIDER: "container" });
+  const config = loadConfig({ NODE_ENV: "test", APP_DATA_DIR: path.join(root, "data"), AGENT_WORKSPACE_ROOT: path.join(root, "workspaces"), CODEX_HOME: path.join(root, "codex"), ARK_API_KEY: "fixture-key", ARK_MODEL: "fixture-model", RUNTIME_PROVIDER: "container", ...(adjudicator ? { INGRESS_ADJUDICATOR: "ark" } : {}) });
   await writeCodexConfig(config);
   const requests: RunnerRequest[] = [];
   const runner: AgentRunner = { run: async (request) => { requests.push(request); await write(request); return { output: "done token=super-secret-value", threadId: "proposed-thread", usage: null }; }, cancel: async () => false, isAvailable: async () => true };
@@ -183,5 +183,51 @@ describe("Airlock service integration", () => {
     const result = await service.deleteAgent(agent.id);
     expect(result.archivedWorkspace).toContain(".deleted");
     expect(service.listAgents()).toHaveLength(0);
+  });
+});
+
+describe("operator settings", () => {
+  it("layers an override over the environment default and applies it to the next Run", async () => {
+    const { service, agent } = await setup(async () => undefined);
+    await writeFile(path.join(agent.workspacePath, ".env"), "ARK_API_KEY=demo\n");
+
+    expect(service.getIngressSettings().effective.clearance).toBe("internal");
+    const first = await service.sendMessage(agent.id, "look around");
+    await waitFor(service, first.run.id, "completed");
+    expect((await service.getRunEvidence(first.run.id)).ingress?.withheld.map((f) => f.path)).toEqual([".env"]);
+
+    await service.updateIngressSettings({ clearance: "restricted" });
+    expect(service.getIngressSettings().effective.clearance).toBe("restricted");
+
+    const second = await service.sendMessage(agent.id, "look again");
+    await waitFor(service, second.run.id, "completed");
+    const evidence = await service.getRunEvidence(second.run.id);
+    expect(evidence.ingress?.withheld).toEqual([]);
+    expect(evidence.ingress?.clearance).toBe("restricted");
+  });
+
+  it("records every change and flags the ones that reduce protection", async () => {
+    const { service } = await setup(async () => undefined);
+    await service.updateIngressSettings({ clearance: "restricted", enforcement: "audit" });
+    await service.updateIngressSettings({ clearance: "public" });
+
+    const log = service.getIngressSettings().log;
+    expect(log.map((entry) => entry.field + " " + entry.from + "->" + entry.to)).toEqual([
+      "clearance restricted->public",
+      "enforcement enforce->audit",
+      "clearance internal->restricted",
+    ]);
+    // Raising clearance lets the Run read more, so it weakens the control.
+    expect(log.find((entry) => entry.to === "restricted")?.weakens).toBe(true);
+    expect(log.find((entry) => entry.to === "audit")?.weakens).toBe(true);
+    // Dropping back to public tightens it again, so this one does not weaken.
+    expect(log.find((entry) => entry.to === "public")?.weakens).toBe(false);
+  });
+
+  it("ignores a change that does not move the setting", async () => {
+    const { service } = await setup(async () => undefined);
+    await service.updateIngressSettings({ clearance: "internal" });
+    expect(service.getIngressSettings().log).toEqual([]);
+    expect(service.getIngressSettings().overrides).toEqual({});
   });
 });

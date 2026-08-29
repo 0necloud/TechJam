@@ -60,10 +60,12 @@ export interface AgentRun {
 }
 
 export interface Database {
-  version: 3;
+  version: 4;
   agents: Agent[];
   messages: Message[];
   runs: AgentRun[];
+  settings: { ingress: IngressSettings };
+  settingsLog: SettingsChange[];
 }
 
 export interface CreateAgentInput {
@@ -298,4 +300,36 @@ export interface TrifectaDecision {
   effectiveClearance: SensitivityLevel;
   mitigation: string | null;
   rules: PolicyRule[];
+}
+
+/** Runtime overrides for the ingress gate, layered over the environment defaults. */
+export interface IngressSettings {
+  clearance?: SensitivityLevel | undefined;
+  enforcement?: IngressEnforcement | undefined;
+  promptSecrets?: "redact" | "deny" | undefined;
+  adjudicator?: "off" | "ark" | undefined;
+}
+
+/**
+ * One operator change to the gate's configuration. Weakening a control from the
+ * UI is legitimate, but it must leave evidence, so every change is recorded and
+ * the ones that reduce protection are flagged.
+ */
+export interface SettingsChange {
+  id: string;
+  at: string;
+  field: string;
+  from: string;
+  to: string;
+  weakens: boolean;
+}
+
+export interface IngressSettingsView {
+  /** What the next Run will actually enforce. */
+  effective: IngressOptions;
+  /** Only the fields an operator has overridden. */
+  overrides: IngressSettings;
+  /** What the environment configured, before overrides. */
+  defaults: IngressOptions;
+  log: SettingsChange[];
 }

@@ -1674,3 +1674,108 @@ textarea:focus {
   .trifecta-legs li { grid-template-columns: 14px 1fr; }
   .trifecta-legs .leg-reason { grid-column: 2; }
 }
+
+/* --- Operator controls for the ingress gate ------------------------------ */
+
+.ingress-controls {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  display: grid;
+  gap: 10px;
+}
+
+.controls-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+.gate-state {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #277756;
+  background: #dcf2e9;
+}
+.gate-audit { color: #865d13; background: #fff0c9; }
+.gate-off { color: #a13f3f; background: #fae1df; }
+
+.control { display: grid; gap: 4px; font-size: 11px; color: var(--muted); }
+.control > span { font-weight: 650; color: var(--ink); }
+.control em { font-style: normal; font-weight: 600; color: var(--purple-dark); }
+.control select {
+  width: 100%;
+  padding: 6px 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+}
+.control select:disabled { opacity: 0.55; cursor: not-allowed; }
+.control select:focus-visible { outline: 2px solid var(--purple); outline-offset: 1px; }
+.control small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+
+.gate-warning {
+  margin: 0;
+  padding: 8px;
+  border-left: 3px solid var(--red);
+  background: #fff3f1;
+  border-radius: 0 6px 6px 0;
+  font-size: 11px;
+  color: #8f3535;
+}
+
+.settings-log summary { cursor: pointer; font-size: 10px; color: var(--muted); }
+.settings-log ul { margin: 7px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.settings-log li { display: flex; align-items: baseline; gap: 6px; font-size: 10px; color: var(--muted); }
+.settings-log li time { margin-left: auto; }
+.settings-log .log-weaken { color: #8f3535; }
+.settings-log code { font-size: 10px; }
+
+/* --- Read trace replay ---------------------------------------------------- */
+/* Shows how far the classifier got before it halted. The bar stopping short is
+   the whole point, so the stop marker is drawn at the halt position. */
+
+.read-replay { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.replay-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.replay-note { margin: 2px 0 0; font-size: 11px; color: var(--muted); max-width: 46ch; }
+
+.button-quiet {
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: white;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.button-quiet:hover { border-color: var(--purple); color: var(--purple-dark); }
+
+.tape-list { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+
+.tape { padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; background: white; opacity: 0.55; transition: opacity 160ms ease, border-color 160ms ease; }
+.tape-active { opacity: 1; border-color: var(--purple); }
+.tape-halted { opacity: 1; }
+
+.tape-head { display: flex; align-items: center; gap: 7px; }
+.tape-head code { font-size: 11px; font-weight: 600; }
+.tape-head .level { margin-left: auto; }
+
+.tape-track { position: relative; height: 6px; margin: 8px 0 6px; border-radius: 999px; background: #ece9f7; overflow: visible; }
+.tape-fill { display: block; height: 100%; border-radius: 999px; background: var(--purple); width: 0; transition: width 600ms cubic-bezier(0.22, 0.8, 0.3, 1); }
+.tape-stop { position: absolute; top: -4px; width: 2px; height: 14px; border-radius: 1px; background: var(--red); transform: translateX(-1px); }
+
+.tape-label { display: flex; align-items: baseline; gap: 10px; margin: 0; font-size: 10px; color: var(--muted); }
+.tape-bytes { font-variant-numeric: tabular-nums; }
+.tape-verdict { margin-left: auto; text-align: right; }
+.tape-verdict-stop { color: #8f3535; font-weight: 650; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tape-fill { transition: none; }
+}
