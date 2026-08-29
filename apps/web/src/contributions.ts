@@ -84,6 +84,24 @@ export const contributions: Contribution[] = [
     lines: 154,
     isNewFile: false,
   },
+  {
+    id: 8,
+    title: "Read-side ingress gate",
+    blurb:
+      "Deterministic rules classify every staged file, then an optional model adjudicator judges the documents the rules could not settle. It can only raise a verdict, never lower one. Anything above clearance is pulled out of staging before the container starts, so a marked document or a .env is never mounted — not merely never promoted.",
+    file: "apps/server/src/ingress-policy.ts",
+    lines: 264,
+    isNewFile: true,
+  },
+  {
+    id: 9,
+    title: "Lethal-trifecta capability check",
+    blurb:
+      "An agent is dangerous only when it holds private data, untrusted content, and external comms at once. The gate assesses all three per Run and, when the set completes, drops private data — clearance falls to public and the sensitive material is withheld. The Run still executes.",
+    file: "apps/server/src/trifecta-policy.ts",
+    lines: 118,
+    isNewFile: true,
+  },
 ];
 
 /** Totals shown in the index header. */

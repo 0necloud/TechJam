@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, setAuthToken } from "./api";
 import { contributions, contributionSummary } from "./contributions";
-import type { Agent, AgentRun, Message, RunEvidence, SystemInfo } from "./types";
+import type { Agent, AgentRun, Capability, IngressDecision, Message, PromptScreen, RunEvidence, StopReason, SystemInfo, TrifectaDecision } from "./types";
 
 const starterPrompts = [
   "Create a small TypeScript CLI that prints a weather summary from sample JSON.",
@@ -34,6 +34,152 @@ function StatusPill({ status }: { status: Agent["status"] }) {
 
 function Spinner() {
   return <span className="spinner" aria-label="Loading" />;
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return value + " B";
+  if (value < 1024 * 1024) return Math.round(value / 1024) + " KiB";
+  return (value / (1024 * 1024)).toFixed(1) + " MiB";
+}
+
+const STOP_REASON_LABEL: Record<StopReason, string> = {
+  "name-only": "settled from the file name, never opened",
+  "metadata-only": "settled from document properties, body never decompressed",
+  signal: "stopped at the first signal",
+  budget: "stopped at the inspection budget",
+  complete: "read in full",
+};
+
+const CAPABILITY_LABEL: Record<Capability, string> = {
+  "private-data": "Private data",
+  "untrusted-content": "Untrusted content",
+  "external-comms": "External comms",
+};
+
+/**
+ * The lethal trifecta, drawn as three legs rather than described as a rule.
+ * Holding any two is ordinary; holding all three is what makes an agent
+ * dangerous, so the panel shows which legs this Run held and which one the gate
+ * removed.
+ */
+function Trifecta({ trifecta }: { trifecta: TrifectaDecision }) {
+  return (
+    <div className={"trifecta trifecta-" + trifecta.outcome}>
+      <div className="trifecta-head">
+        <span className="eyebrow">Lethal trifecta</span>
+        <span className={"trifecta-state state-" + trifecta.outcome}>
+          {trifecta.outcome === "safe" ? trifecta.present.length + " of 3 held" : trifecta.outcome === "mitigated" ? "broken" : "unmitigated"}
+        </span>
+      </div>
+      <ul className="trifecta-legs">
+        {trifecta.findings.map((finding) => {
+          const dropped = trifecta.outcome === "mitigated" && finding.capability === "private-data";
+          return (
+            <li key={finding.capability} className={(finding.present ? "leg-held" : "leg-clear") + (dropped ? " leg-dropped" : "")}>
+              <span className="leg-dot" aria-hidden="true" />
+              <span className="leg-name">{CAPABILITY_LABEL[finding.capability]}</span>
+              <span className="leg-reason">{finding.reason}</span>
+            </li>
+          );
+        })}
+      </ul>
+      {trifecta.mitigation && <p className="trifecta-mitigation">{trifecta.mitigation}. The Run keeps running; it just cannot read private material while it also holds untrusted content and network reach.</p>}
+      {trifecta.outcome === "unmitigated" && <p className="trifecta-mitigation">All three capabilities were held. The gate is in audit mode, so this was recorded rather than mitigated.</p>}
+    </div>
+  );
+}
+
+/**
+ * The read-side half of the evidence panel. The numbers matter more than the
+ * prose here: a reviewer should be able to see how little of each file the gate
+ * had to read before it decided, and which half of the gate decided it.
+ */
+function IngressGate({ ingress, promptScreen, activeContribution, onHoverSurface }: { ingress: IngressDecision; promptScreen: PromptScreen | null; activeContribution: number | null; onHoverSurface: (id: number | null) => void }) {
+  const promptFindings = [
+    promptScreen?.outcome === "sanitized" ? { id: "IN010", text: "Credential material was stripped from the prompt before anything was staged." } : null,
+    promptScreen?.requestsSensitiveAccess ? { id: "IN011", text: "This request asks the Agent to read or transmit sensitive material." } : null,
+    ...ingress.adjudications
+      .filter((record) => record.kind === "prompt" && record.raised)
+      .map((record) => ({ id: "IN041", text: record.rationale || "The adjudicator judged this request to need material above clearance." })),
+  ].filter((finding): finding is { id: string; text: string } => finding !== null);
+  const judged = ingress.adjudications.filter((record) => record.kind === "file");
+
+  return (
+    <div className="ingress-gate">
+      <div className="ingress-head">
+        <div>
+          <span className="eyebrow">Ingress gate</span>
+          <h4>What the Runtime was allowed to read</h4>
+        </div>
+        <span className={"ingress-verdict verdict-" + ingress.outcome}>{ingress.outcome}</span>
+      </div>
+
+      <div className="ingress-stats">
+        <div><strong>{ingress.scannedFiles}</strong><span>classified</span></div>
+        <div><strong>{ingress.withheld.length}</strong><span>withheld</span></div>
+        <div><strong>{ingress.earlyStops}</strong><span>stopped early</span></div>
+        <div><strong>{formatBytes(ingress.bytesSkipped)}</strong><span>never read</span></div>
+      </div>
+
+      {ingress.trifecta && (
+        <Surface id={9} active={activeContribution} onHover={onHoverSurface}>
+          <Trifecta trifecta={ingress.trifecta} />
+        </Surface>
+      )}
+
+      <div className="policy-facts">
+        <span>clearance: {ingress.clearance}{ingress.effectiveClearance !== ingress.clearance ? " → " + ingress.effectiveClearance : ""}</span>
+        <span>mode: {ingress.enforcement}</span>
+        <span>adjudicator: {ingress.adjudicator}</span>
+        {ingress.adjudicator !== "off" && <span>{judged.length} judged · {judged.filter((record) => record.raised).length} raised</span>}
+        {ingress.adjudicationErrors > 0 && <span className="fact-warn">{ingress.adjudicationErrors} unavailable</span>}
+      </div>
+
+      {promptFindings.length > 0 && (
+        <div className="ingress-findings">
+          {promptFindings.map((finding) => (
+            <p className="policy-rule" key={finding.id}><strong>{finding.id}</strong> — {finding.text}</p>
+          ))}
+        </div>
+      )}
+
+      {ingress.withheld.length > 0 ? (
+        <ul className="withheld-list">
+          {ingress.withheld.map((file) => (
+            <li key={file.path}>
+              <div className="withheld-head">
+                <code>{file.path}</code>
+                <span className={"level level-" + file.level}>{file.level}</span>
+                <span className={"source source-" + file.source}>{file.source === "agent" ? "adjudicator" : "rules"}</span>
+              </div>
+              <p className="withheld-reason">{file.ruleIds.join(", ")} · {file.reason}</p>
+              <div className="read-meter" role="img" aria-label={"Read " + file.bytesInspected + " of " + file.size + " bytes"}>
+                <span style={{ width: Math.max(1, Math.min(100, file.size ? (file.bytesInspected / file.size) * 100 : 0)) + "%" }} />
+              </div>
+              <p className="withheld-meter-label">read {formatBytes(file.bytesInspected)} of {formatBytes(file.size)} before withholding</p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="workspace-safe">✓ Nothing above clearance reached the Runtime.</p>
+      )}
+
+      {ingress.observed.length > 0 && (
+        <details className="ingress-observed">
+          <summary>{ingress.observed.length} classified file(s)</summary>
+          <ul>
+            {ingress.observed.map((file) => (
+              <li key={file.path}>
+                <code>{file.path}</code>
+                <span className={"level level-" + file.level}>{file.level}</span>
+                <small>{STOP_REASON_LABEL[file.stopReason]}</small>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -86,6 +232,8 @@ export default function App() {
     const visible = new Set<number>();
     if (!evidence) return visible;
     for (const id of [1, 2, 5, 6]) visible.add(id);
+    if (evidence.ingress) visible.add(8);
+    if (evidence.ingress?.trifecta) visible.add(9);
     if (evidence.run.status === "awaiting_review") { visible.add(3); visible.add(7); }
     if (evidence.policyDecision?.rules.length) visible.add(4);
     return visible;
@@ -632,6 +780,11 @@ export default function App() {
                         <span>Container Runtime</span><span>Staging-only workspace</span><span>Private Agent session</span><span>{evidence.policy?.networkMode ?? "policy unavailable"}</span>
                       </div>
                     </Surface>
+                    {evidence.ingress && (
+                      <Surface id={8} active={activeContribution} onHover={setActiveContribution}>
+                        <IngressGate ingress={evidence.ingress} promptScreen={evidence.promptScreen} activeContribution={activeContribution} onHoverSurface={setActiveContribution} />
+                      </Surface>
+                    )}
                     {evidence.run.status === "awaiting_review" && (
                       <Surface id={3} active={activeContribution} onHover={setActiveContribution}>
                         <p className="workspace-safe">✓ Live workspace unchanged: {evidence.liveWorkspaceUnchanged ? "confirmed" : "conflict detected"}</p>

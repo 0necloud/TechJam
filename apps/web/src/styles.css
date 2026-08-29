@@ -1467,3 +1467,210 @@ textarea:focus {
     transition: none;
   }
 }
+
+
+/* --- Airlock ingress gate ------------------------------------------------ */
+/* The read-side evidence card. Sits inside .evidence-panel, so it borrows the
+   panel's type scale and only defines its own rhythm, meters, and level pills. */
+
+.ingress-gate {
+  margin: 14px 0;
+  padding: 16px;
+  border: 1px solid #e4dfd0;
+  border-radius: 12px;
+  background: #fffdf7;
+}
+
+.ingress-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ingress-head h4 {
+  margin: 3px 0 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.ingress-verdict {
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #277756;
+  background: #dcf2e9;
+}
+
+.verdict-restricted { color: #865d13; background: #fff0c9; }
+.verdict-denied { color: #a13f3f; background: #fae1df; }
+
+.ingress-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.ingress-stats div {
+  padding: 10px;
+  border: 1px solid #ece6d6;
+  border-radius: 9px;
+  background: white;
+}
+
+.ingress-stats strong {
+  display: block;
+  font-size: 18px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.ingress-stats span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.ingress-gate .policy-facts { margin: 0 0 12px; }
+.ingress-gate .fact-warn { color: #a13f3f; border-color: #eccfcc; }
+
+.ingress-findings { display: grid; gap: 6px; margin-bottom: 12px; }
+.ingress-gate .policy-rule { border-left-color: #b07d2b; background: #fff6e8; border-radius: 0 6px 6px 0; }
+
+.withheld-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+
+.withheld-list li {
+  padding: 11px 12px;
+  border: 1px solid #ece6d6;
+  border-radius: 10px;
+  background: white;
+}
+
+.withheld-head { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.withheld-head code { font-size: 12px; font-weight: 600; }
+
+.level {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #5f5c69;
+  background: #efeee9;
+}
+
+.level-internal { color: #4a5b7a; background: #e6ecf6; }
+.level-confidential { color: #865d13; background: #fff0c9; }
+.level-restricted { color: #a13f3f; background: #fae1df; }
+
+.source {
+  margin-left: auto;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.source-agent { color: var(--purple-dark); border-color: #d5cdf5; background: var(--purple-soft); }
+
+.withheld-reason { margin: 7px 0 9px; color: #5f5c69; font-size: 11px; }
+
+/* How much of the file the gate had to read before it decided. A short bar is
+   the point of the whole design, so it is drawn rather than described. */
+.read-meter {
+  height: 4px;
+  border-radius: 999px;
+  background: #ece6d6;
+  overflow: hidden;
+}
+
+.read-meter span { display: block; height: 100%; border-radius: 999px; background: var(--purple); }
+
+.withheld-meter-label { margin: 6px 0 0; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+
+.ingress-observed { margin-top: 12px; }
+.ingress-observed summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+.ingress-observed ul { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.ingress-observed li { display: flex; align-items: center; gap: 7px; font-size: 11px; }
+.ingress-observed code { font-size: 11px; }
+.ingress-observed small { margin-left: auto; color: var(--muted); font-size: 10px; text-align: right; }
+
+@media (max-width: 640px) {
+  .ingress-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ingress-observed li { flex-wrap: wrap; }
+  .ingress-observed small { margin-left: 0; text-align: left; }
+}
+
+/* --- Lethal trifecta ------------------------------------------------------ */
+/* Three legs. Held legs are filled; the leg the gate removed is struck through,
+   so the mitigation reads as an action taken rather than a warning printed. */
+
+.trifecta {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid #ece6d6;
+  border-radius: 10px;
+  background: white;
+}
+
+.trifecta-mitigated { border-color: #e4d3ae; background: #fffaf0; }
+.trifecta-unmitigated { border-color: #eccfcc; background: #fff6f5; }
+
+.trifecta-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+.trifecta-state {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #277756;
+  background: #dcf2e9;
+}
+
+.state-mitigated { color: #865d13; background: #fff0c9; }
+.state-unmitigated { color: #a13f3f; background: #fae1df; }
+
+.trifecta-legs { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+
+.trifecta-legs li {
+  display: grid;
+  grid-template-columns: 14px minmax(120px, auto) 1fr;
+  align-items: baseline;
+  gap: 9px;
+  font-size: 11px;
+}
+
+.leg-dot {
+  width: 9px;
+  height: 9px;
+  align-self: center;
+  border: 1.5px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+}
+
+.leg-held .leg-dot { border-color: #c08a2e; background: #e0a53c; }
+.leg-held .leg-name { font-weight: 650; }
+.leg-clear .leg-name { color: var(--muted); }
+.leg-reason { color: var(--muted); font-size: 10px; }
+
+.leg-dropped .leg-dot { border-color: var(--green); background: var(--green); }
+.leg-dropped .leg-name { text-decoration: line-through; text-decoration-thickness: 1.5px; color: var(--muted); }
+
+.trifecta-mitigation { margin: 10px 0 0; color: #5f5c69; font-size: 11px; line-height: 1.45; }
+
+@media (max-width: 640px) {
+  .trifecta-legs li { grid-template-columns: 14px 1fr; }
+  .trifecta-legs .leg-reason { grid-column: 2; }
+}

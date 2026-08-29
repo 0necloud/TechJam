@@ -32,6 +32,16 @@ const envSchema = z.object({
     .max(48)
     .regex(/^[a-zA-Z0-9_.-]+$/)
     .default("default"),
+  INGRESS_ENFORCEMENT: z.enum(["off", "audit", "enforce"]).default("enforce"),
+  INGRESS_CLEARANCE: z
+    .enum(["public", "internal", "confidential", "restricted"])
+    .default("internal"),
+  INGRESS_MAX_BYTES_PER_FILE: z.coerce.number().int().min(1_024).default(262_144),
+  INGRESS_PROMPT_SECRETS: z.enum(["redact", "deny"]).default("redact"),
+  INGRESS_ADJUDICATOR: z.enum(["off", "ark"]).default("off"),
+  INGRESS_ADJUDICATOR_MAX_FILES: z.coerce.number().int().min(0).max(50).default(5),
+  INGRESS_ADJUDICATOR_EXCERPT_BYTES: z.coerce.number().int().min(200).max(20_000).default(2_000),
+  INGRESS_ADJUDICATOR_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(15_000),
   APP_AUTH_TOKEN: z
     .string()
     .trim()
@@ -83,6 +93,16 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     containerPidsLimit: env.CONTAINER_PIDS_LIMIT,
     containerUser: env.CONTAINER_USER?.trim() || defaultContainerUser,
     runtimeInstanceId: env.RUNTIME_INSTANCE_ID,
+    ingress: {
+      enforcement: env.INGRESS_ENFORCEMENT,
+      clearance: env.INGRESS_CLEARANCE,
+      maxBytesPerFile: env.INGRESS_MAX_BYTES_PER_FILE,
+      promptSecrets: env.INGRESS_PROMPT_SECRETS,
+      adjudicator: env.INGRESS_ADJUDICATOR,
+      adjudicatorMaxFiles: env.INGRESS_ADJUDICATOR_MAX_FILES,
+      adjudicatorExcerptBytes: env.INGRESS_ADJUDICATOR_EXCERPT_BYTES,
+      adjudicatorTimeoutMs: env.INGRESS_ADJUDICATOR_TIMEOUT_MS,
+    },
     authToken,
     arkApiKey: env.ARK_API_KEY?.trim() ?? "",
     arkModel: env.ARK_MODEL?.trim() ?? "",

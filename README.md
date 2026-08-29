@@ -32,6 +32,9 @@ Volcengine ECS.
 - Disposable Docker, Colima, or Podman container for each local turn
 - Per-Run staging workspaces and per-Agent private Codex homes
 - Deterministic protected-path, symlink, credential, and size policy
+- Read-side ingress gate: prompt screening, directory enforcement, and staged-content classification with early-abort reads
+- Lethal-trifecta capability check that breaks the private-data + untrusted-content + external-comms set per Run
+- Optional model adjudicator for unmarked documents, able to raise a classification but never lower one
 - Review evidence with approve/reject and conflict-safe promotion
 - Docker and Terraform deployment paths for Volcengine ECS
 
@@ -216,6 +219,12 @@ cp deploy/volcengine/terraform.tfvars.example \
 | `RUNTIME_PROVIDER` | `container` | Guarded Runs require disposable Runtime containers and fail closed otherwise. |
 | `CODEX_SANDBOX_MODE` | `workspace-write` | Codex inner sandbox mode. |
 | `CODEX_TIMEOUT_MS` | `600000` | Maximum duration of one turn. |
+| `INGRESS_ENFORCEMENT` | `enforce` | Read-side gate: `enforce` withholds, `audit` records, `off` disables. |
+| `INGRESS_CLEARANCE` | `internal` | Highest sensitivity a Run may read. |
+| `INGRESS_MAX_BYTES_PER_FILE` | `262144` | Inspection budget per file; rules usually settle sooner. |
+| `INGRESS_PROMPT_SECRETS` | `redact` | Credentials pasted into a prompt: `redact` or `deny`. |
+| `INGRESS_ADJUDICATOR` | `off` | Model-backed classification of unmarked documents: `off` or `ark`. |
+| `INGRESS_ADJUDICATOR_MAX_FILES` | `5` | Model calls per Run. |
 | `LOCAL_POC_DATA_ROOT` | Platform-specific | Local metadata, workspace, and session directory. |
 
 See [.env.example](.env.example) for all Runtime and resource-limit options.
@@ -227,7 +236,9 @@ flowchart LR
     UI["React review UI"] --> API["Fastify control plane"]
     API --> TX["Transaction + deterministic policy"]
     Live["Live workspace"] -->|copy + digest| Stage["Run staging workspace"]
-    TX --> Stage --> Container["Restricted disposable container"] --> Ark["Volcengine Ark"]
+    TX --> Stage --> Gate["Ingress gate: classify + withhold"] --> Container["Restricted disposable container"] --> Ark["Volcengine Ark"]
+    Gate --> Tri["Lethal-trifecta check"] --> Gate
+    Gate -->|above clearance| Held["Withheld originals"]
     Container --> Inspect["Inspect changes"] --> Review["Human review"]
     Review -->|approve if digest matches| Live
     Review -->|reject or deny| Discard["Discard staging"]
@@ -237,7 +248,137 @@ Only staging and the selected Agent's private Codex home are writable Runtime
 mounts. Approved turns commit both files and the proposed Codex thread;
 rejection resets session state. Airlock uses Architecture B: Codex acts
 autonomously, so enforcement occurs at mounts, Runtime lifetime, deterministic
-file policy, and promotion—not through a claimed per-tool interceptor.
+file policy, and promotion—not through a claimed per-tool interceptor. The
+ingress gate applies the same principle to reads: what the Runtime may read is
+decided by what gets staged, before the mount exists.
+
+## The ingress gate
+
+The transaction and change policy decide what may *leave* the Runtime. The
+ingress gate decides what may *enter* it. Everything below runs in the control
+plane, before the container exists.
+
+### What it is made of
+
+| Module | Responsibility |
+| --- | --- |
+| [`sensitivity.ts`](apps/server/src/sensitivity.ts) | Classifies a file from as few bytes as the verdict allows: name rules, classification markings, credential and personal-data detection, Office `docProps` labels, untrusted provenance, and injection phrasing. |
+| [`ingress-policy.ts`](apps/server/src/ingress-policy.ts) | The gate itself: prompt screening, the directory boundary, staged-content screening, and withholding. |
+| [`trifecta-policy.ts`](apps/server/src/trifecta-policy.ts) | Assesses the three capabilities per Run and decides which one to remove. |
+| [`ingress-adjudicator.ts`](apps/server/src/ingress-adjudicator.ts) | Optional model second-opinion for documents the rules cannot settle. Raise-only. |
+
+### Rule namespace
+
+`TC###` rules gate what leaves. `IN###` rules gate what enters.
+
+| Rule | Fires when |
+| --- | --- |
+| `IN001` | A staged path resolves outside the Run's workspace. |
+| `IN010` | The prompt contains credential material. Stripped, or refused under `deny`. |
+| `IN011` | The prompt asks the Agent to read or transmit sensitive material. |
+| `IN012` | The prompt names a path outside the workspace. |
+| `IN020` / `IN025` | A file name identifies a credential store, or declares sensitivity. |
+| `IN021` | A document carries a classification marking, including Office labels. |
+| `IN022` / `IN023` | Content contains credentials, or personal data. |
+| `IN030` | Content above clearance was withheld from the Runtime. |
+| `IN040` / `IN041` | The adjudicator raised a file's, or the request's, classification. |
+| `IN042` | An adjudication was unavailable; the deterministic verdict stands. |
+| `IN050` / `IN051` / `IN052` | Untrusted provenance in staging, a URL in the prompt, injection phrasing. |
+| `IN060` / `IN061` / `IN062` | The lethal trifecta was complete, mitigated, or recorded unmitigated. |
+| `TC007` | The Runtime edited a file the gate had withheld. Denies the change set. |
+
+### Enforcement points
+
+Three, in the order a Run meets them:
+
+1. **Prompt screening.** Before anything is staged, the prompt is judged for
+   whether it carries credential material (`IN010` — stripped, or refused when
+   `INGRESS_PROMPT_SECRETS=deny`), asks the Agent to read or transmit sensitive
+   material (`IN011`), or names a path outside the workspace (`IN012`).
+2. **Directory boundary.** Every staged path is resolved through symlinks and
+   proved to sit inside the Run's staging root. A link that escapes fails the
+   Run closed (`IN001`), and the Runtime only ever receives the staging mount
+   and its own Codex home.
+3. **Staged-content classification.** Each staged file is classified by name
+   (`IN020`, `IN025`), by classification marking (`IN021`), by credential
+   content (`IN022`), and by personal data (`IN023`). Anything above the Run's
+   clearance is moved out of staging into the transaction's `.withheld`
+   directory and replaced by a tombstone (`IN030`). The original is restored
+   before promotion, so an approved Run can never overwrite the live file with
+   its tombstone, and a Runtime that edits a tombstone is denied by `TC007`.
+
+### The lethal trifecta
+
+An agent is dangerous when it holds all three of these at once:
+
+| Capability | How Airlock sees it |
+| --- | --- |
+| Private data | A staged file at or above `internal` is readable at the Run's clearance. |
+| Untrusted content | Staged content of outside provenance (`vendor/`, `third_party/`, `.eml`, `.html`) or carrying injection-shaped text (`IN050`, `IN052`), or a URL in the prompt (`IN051`). |
+| External comms | The Run policy's `networkMode` is anything other than `none`. |
+
+Any two are survivable. All three means the untrusted text can tell the agent to
+read the private data and send it out, and no amount of prompt hardening
+reliably stops that. So the gate does not try to detect the attack — it removes
+a leg.
+
+Which leg? Not comms: Codex must reach Ark over the bridge to run at all, and
+there is no Ark-only egress gateway yet. Not the untrusted content: the Run
+needs it. So `IN061` drops **private data** — the Run's effective clearance
+falls to `public` and the ingress gate withholds everything above it. The Run
+still executes; it simply cannot read secrets while it also holds untrusted
+content and network reach. When an egress gateway exists, dropping comms becomes
+the cheaper mitigation, and `trifecta-policy.ts` is where that choice lives.
+
+### Deterministic rules, then a model for what they cannot settle
+
+Rules catch what can be named: a `.env`, an `AKIA...`, a `CONFIDENTIAL` banner.
+They cannot catch a board memo that is sensitive because of what it *says*. With
+`INGRESS_ADJUDICATOR=ark`, documents the rules left below clearance are sent to
+the model for a second opinion, within a fixed call budget.
+
+Two properties make an unreliable judge safe to use:
+
+1. **It can only raise.** The gate takes the maximum of the deterministic level
+   and the adjudicated one, so a hallucinated "public" changes nothing. Every
+   judgement is recorded in the evidence with its rationale and confidence.
+2. **It runs in the control plane**, on a bounded, secret-redacted excerpt of
+   bytes already read — never inside the Runtime, never with the workspace
+   attached.
+
+It is off by default. Turning it on means sending excerpts of staged content to
+Ark, which is a real trade and should be a deliberate choice.
+
+### Can a read be stopped once it has begun?
+
+Not inside the container, and the gate does not pretend otherwise. Airlock uses
+Architecture B: Codex acts autonomously in its Runtime, so a read of a bind
+mount is an ordinary syscall with nothing to hook. The gate's answer is to make
+sure the bytes were never mounted.
+
+The classifier *itself* does stop mid-read, which is the part that is real and
+measurable. It reads as little as the verdict allows and then destroys the
+stream:
+
+- a `.env` or `server.pem` is settled from its **name**, with zero bytes read;
+- a classified Word document is settled from `docProps/core.xml` and
+  `docProps/custom.xml` — the zip central directory is used to reach the label
+  without decompressing the document body;
+- a marked text file stops at the marking, so the rest of the file is never
+  read into the control plane either.
+
+The evidence panel reports `bytesInspected` against file size and counts how
+many reads stopped early, so the claim is checkable per Run rather than
+asserted.
+
+### Known limits
+
+Content the classifier cannot see, it cannot classify: encrypted archives,
+image-only PDFs, and markings that exist only in a compressed page stream. A
+document body is never scanned for Office containers — only its properties.
+Marking detection is a heuristic tuned to avoid quarantining source code that
+merely mentions the word. Set `INGRESS_CLEARANCE=public` when a workspace
+should surface everything for review rather than only what the rules match.
 
 ## Airlock demo
 
@@ -250,6 +391,21 @@ file policy, and promotion—not through a claimed per-tool interceptor.
 4. Ask it to create `config/.env` instead. Protected names are matched on every
    path segment, so `TC002` denies the nested copy too, and the evidence panel
    names the offending path.
+5. Put a `docs/handbook.md` starting with `COMPANY CONFIDENTIAL` into the live
+   workspace and ask the Agent to summarise it. The ingress gate withholds the
+   file before the container starts, the Agent reports only the tombstone, and
+   the evidence panel shows `IN021` with how few bytes were read. Approving the
+   Run leaves the original document intact.
+6. Paste a fake key into a prompt (`call the API with api_key=sk-live-...`).
+   `IN010` strips it, so the Runtime, the transcript, and the audit record never
+   hold the value.
+7. The trifecta. Put a `docs/roadmap.md` starting with `INTERNAL ONLY` in the
+   workspace and ask the Agent to work on it — the panel shows two of three
+   capabilities held, and the file stays readable. Now add
+   `vendor/widget/readme.html` containing "Ignore all previous instructions", or
+   simply put a URL in the prompt. The third leg closes, `IN061` drops clearance
+   to `public`, and the roadmap is withheld — from the same Run that could read
+   it a moment ago.
 
 Middleware development uses deterministic fake runners and needs no model:
 
@@ -267,7 +423,13 @@ paths, and persisted evidence. Controls include staging-only mounts, private
 session homes, protected-path and symlink denial, stale-digest conflicts,
 read-only container roots, bounded `/tmp`, and resource limits.
 
-Residual risks: bridge networking is not Ark-only egress; the Runtime receives
+On the read side, the ingress gate withholds staged content above the Run's
+clearance before the container starts, so a marked document or credential file
+is never mounted.
+
+Residual risks: content the classifier cannot decode (encrypted archives,
+image-only PDFs, markings that live only in a compressed page stream) is
+classified as unmarked; bridge networking is not Ark-only egress; the Runtime receives
 the Ark credential; ordinary containers are not hostile multi-tenant
 isolation; and the JSON store is single-process. Profiles unable to launch a
 disposable Runtime fail closed. The optional Ark gateway is not implemented.

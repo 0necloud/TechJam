@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import type { FileChange, WorkspaceTransaction } from "./types.js";
+import type { FileChange, WithheldFile, WorkspaceTransaction } from "./types.js";
 
-const EXCLUDED = new Set([".git", ".codex", "node_modules", "dist", ".transactions", ".rollback", ".deleted"]);
+const EXCLUDED = new Set([".git", ".codex", "node_modules", "dist", ".transactions", ".rollback", ".deleted", ".withheld"]);
 const PATCH_LIMIT = 16_384;
 
 interface Entry { hash: string | null; size: number; content?: string; symbolicLink: boolean }
@@ -103,14 +103,37 @@ export class WorkspaceTransactionManager {
     return { runId, livePath: path.resolve(livePath), transactionPath, stagingPath, rollbackPath, initialDigest };
   }
 
-  async inspect(transaction: WorkspaceTransaction): Promise<FileChange[]> {
+  /** Absolute location of the originals the ingress gate pulled out of staging. */
+  withheldRoot(transaction: WorkspaceTransaction): string {
     this.validate(transaction);
+    return path.join(transaction.transactionPath, ".withheld");
+  }
+
+  /**
+   * Diffs live against staging.
+   *
+   * Withheld files need special handling: staging holds an Airlock tombstone
+   * where the original used to be, so a naive diff would report the gate's own
+   * substitution as an Agent change and, once approved, would overwrite the live
+   * sensitive file with the tombstone. An untouched tombstone is therefore
+   * treated as no change, and a tombstone the Runtime edited or deleted is
+   * reported as a tamper so `TC007` denies the whole change set.
+   */
+  async inspect(transaction: WorkspaceTransaction, withheld: WithheldFile[] = []): Promise<FileChange[]> {
+    this.validate(transaction);
+    const tombstones = new Map(withheld.map((file) => [file.path, file.tombstoneHash]));
     const [before, after] = await Promise.all([scan(transaction.livePath), scan(transaction.stagingPath, true)]);
     const names = [...new Set([...before.keys(), ...after.keys()])].sort();
     const changes: FileChange[] = [];
     for (const name of names) {
       const oldEntry = before.get(name);
       const newEntry = after.get(name);
+      const tombstoneHash = tombstones.get(name);
+      if (tombstoneHash !== undefined) {
+        if (newEntry?.hash === tombstoneHash) continue;
+        changes.push({ path: name, kind: !newEntry ? "deleted" : "modified", beforeHash: oldEntry?.hash ?? null, afterHash: newEntry?.hash ?? null, size: newEntry?.size ?? 0, withheldTamper: true });
+        continue;
+      }
       if (oldEntry?.hash === newEntry?.hash && oldEntry?.symbolicLink === newEntry?.symbolicLink) continue;
       const patch = patchFor(name, oldEntry, newEntry);
       changes.push({ path: name, kind: !oldEntry ? "added" : !newEntry ? "deleted" : "modified", beforeHash: oldEntry?.hash ?? null, afterHash: newEntry?.hash ?? null, size: newEntry?.size ?? oldEntry?.size ?? 0, ...(patch !== undefined ? { patch } : {}), ...(newEntry?.symbolicLink ? { symbolicLink: true } : {}) });
@@ -118,14 +141,31 @@ export class WorkspaceTransactionManager {
     return changes;
   }
 
+  /** Puts withheld originals back into staging so promotion cannot lose them. */
+  async restoreWithheld(transaction: WorkspaceTransaction, withheld: WithheldFile[]): Promise<void> {
+    this.validate(transaction);
+    const root = this.withheldRoot(transaction);
+    for (const file of withheld) {
+      const source = path.join(root, file.path);
+      const destination = path.join(transaction.stagingPath, file.path);
+      assertChild(root, source);
+      assertChild(transaction.stagingPath, destination);
+      if (!(await stat(source).then(() => true).catch(() => false))) continue;
+      await rm(destination, { force: true });
+      await mkdir(path.dirname(destination), { recursive: true });
+      await rename(source, destination);
+    }
+  }
+
   async liveDigest(transaction: WorkspaceTransaction): Promise<string> {
     this.validate(transaction);
     return digest(transaction.livePath);
   }
 
-  async promote(transaction: WorkspaceTransaction): Promise<void> {
+  async promote(transaction: WorkspaceTransaction, withheld: WithheldFile[] = []): Promise<void> {
     this.validate(transaction);
     if (await digest(transaction.livePath) !== transaction.initialDigest) throw new Error("Live workspace changed while the Run awaited review");
+    if (withheld.length) await this.restoreWithheld(transaction, withheld);
     await rm(transaction.rollbackPath, { recursive: true, force: true });
     await mkdir(path.dirname(transaction.rollbackPath), { recursive: true });
     await rename(transaction.livePath, transaction.rollbackPath);

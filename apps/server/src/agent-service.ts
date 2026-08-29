@@ -17,6 +17,9 @@ import { WorkspaceManager } from "./workspace.js";
 import { WorkspaceTransactionManager } from "./workspace-transaction.js";
 import { createRunPolicy } from "./run-policy.js";
 import { evaluateChanges } from "./change-policy.js";
+import { adjudicatePrompt, ingressSummary, screenPrompt, screenWorkspace } from "./ingress-policy.js";
+import { trifectaSummary } from "./trifecta-policy.js";
+import { createIngressAdjudicator, type IngressAdjudicator } from "./ingress-adjudicator.js";
 import { auditEvent, redact } from "./audit-recorder.js";
 
 const now = () => new Date().toISOString();
@@ -26,13 +29,23 @@ export class AgentService {
   private readonly cancellationRequests = new Set<string>();
   private readonly decisionsInProgress = new Set<string>();
   private readonly transactions: WorkspaceTransactionManager;
+  private readonly adjudicator: IngressAdjudicator;
 
   constructor(
     private readonly config: AppConfig,
     private readonly store: JsonStore,
     private readonly workspaces: WorkspaceManager,
     private readonly runner: AgentRunner,
-  ) { this.transactions = new WorkspaceTransactionManager(config.workspaceRoot); }
+    adjudicator?: IngressAdjudicator,
+  ) {
+    this.transactions = new WorkspaceTransactionManager(config.workspaceRoot);
+    this.adjudicator = adjudicator ?? createIngressAdjudicator(config);
+  }
+
+  /** Null when the model-backed half of the gate is switched off. */
+  private get activeAdjudicator(): IngressAdjudicator | null {
+    return this.adjudicator.name === "off" ? null : this.adjudicator;
+  }
 
   async initialize(): Promise<void> {
     await this.store.initialize();
@@ -180,7 +193,8 @@ export class AgentService {
     const run = this.getRun(runId);
     const unchanged = run.transaction ? await this.transactions.liveDigest(run.transaction).then((value) => value === run.transaction!.initialDigest).catch(() => false) : true;
     const safeRun = { ...run, prompt: redact(run.prompt), output: run.output ? redact(run.output) : null, error: run.error ? redact(run.error) : null };
-    return { run: safeRun, policy: run.policy, timeline: run.auditEvents, changes: run.changes, policyDecision: run.policyDecision, decision: run.decision, liveWorkspaceUnchanged: unchanged };
+    const safeScreen = run.promptScreen ? { ...run.promptScreen, sanitizedPrompt: redact(run.promptScreen.sanitizedPrompt) } : null;
+    return { run: safeRun, policy: run.policy, timeline: run.auditEvents, changes: run.changes, policyDecision: run.policyDecision, promptScreen: safeScreen, ingress: run.ingress, decision: run.decision, liveWorkspaceUnchanged: unchanged };
   }
 
   async sendMessage(
@@ -193,13 +207,21 @@ export class AgentService {
         "Ark is not configured. Set ARK_API_KEY and ARK_MODEL, then restart.",
       );
     }
+    // Ingress point 1: judge the request before anything is staged. A pasted
+    // credential is stripped (or refused) here so it never reaches the Runtime,
+    // the transcript, or the audit record.
+    const promptScreen = screenPrompt(prompt, this.config.ingress);
+    if (promptScreen.outcome === "denied") {
+      throw new HttpError(400, "Prompt rejected by the Airlock ingress gate: " + promptScreen.rules.map((rule) => rule.id + " " + rule.message).join(" "));
+    }
+    const screenedPrompt = promptScreen.sanitizedPrompt;
     const timestamp = now();
     const runId = randomUUID();
     const run: AgentRun = {
       id: runId,
       agentId,
       status: "queued",
-      prompt,
+      prompt: screenedPrompt,
       output: null,
       error: null,
       usage: null,
@@ -208,6 +230,8 @@ export class AgentService {
       transaction: null,
       changes: [],
       policyDecision: null,
+      promptScreen,
+      ingress: null,
       decision: null,
       auditEvents: [],
       startedAt: null,
@@ -219,7 +243,7 @@ export class AgentService {
       agentId,
       runId,
       role: "user",
-      content: prompt,
+      content: screenedPrompt,
       createdAt: timestamp,
     };
     const agentAtStart = await this.store.mutate((database) => {
@@ -235,6 +259,7 @@ export class AgentService {
       }
       database.runs.push(run);
       run.auditEvents.push(auditEvent(run, "run.created", "Run queued for guarded execution"));
+      run.auditEvents.push(auditEvent(run, "prompt.screened", promptScreen.outcome === "sanitized" ? "Prompt sanitized before staging" : promptScreen.requestsSensitiveAccess ? "Prompt requests sensitive material" : "Prompt screened with no findings", promptScreen.rules.map((rule) => rule.id)));
       database.messages.push(message);
       const snapshot = structuredClone(storedAgent);
       storedAgent.status = "busy";
@@ -261,6 +286,7 @@ export class AgentService {
       arkModel: this.config.arkModel || null,
       codexAvailable: await this.runner.isAvailable(),
       codexSandboxMode: this.config.codexSandboxMode,
+      ingress: this.config.ingress,
       runtimeProvider: this.config.runtimeProvider,
       containerEngine:
         this.config.runtimeProvider === "container"
@@ -290,9 +316,41 @@ export class AgentService {
       }
       if (this.config.runtimeProvider !== "container") throw new Error("Airlock guarded Runs require RUNTIME_PROVIDER=container");
       transaction = await this.transactions.prepare(run.id, agentAtStart.workspacePath);
-      const codexHomePath = await ensureAgentCodexHome(this.config, agentAtStart.id);
       const activeRun = this.getRun(run.id);
-      await this.store.mutate((database) => { const stored = database.runs.find((item) => item.id === run.id); if (stored) { stored.transaction = transaction; stored.auditEvents.push(auditEvent(stored, "workspace.staged", "Live workspace copied into an isolated transaction"), auditEvent(stored, "runtime.started", "Container Runtime started with staging and private session mounts")); } });
+      // Ingress point 3: classify the staged copy, assess the lethal trifecta,
+      // and pull anything above the resulting clearance back out. This is the
+      // last moment a read can be stopped — after the mount exists, Codex reads
+      // it with plain syscalls.
+      const ingress = await screenWorkspace(transaction.stagingPath, this.transactions.withheldRoot(transaction), this.config.ingress, {
+        adjudicator: this.activeAdjudicator,
+        networkMode: activeRun.policy?.networkMode ?? "current-bridge",
+        untrustedPrompt: activeRun.promptScreen?.untrustedReferences ?? [],
+      });
+      // The prompt judgement is advisory and must never fail the Run, so an
+      // unreachable model is recorded rather than propagated.
+      const promptJudgement = await adjudicatePrompt(run.prompt, this.config.ingress, this.activeAdjudicator).catch(() => {
+        ingress.adjudicationErrors += 1;
+        return null;
+      });
+      if (promptJudgement) {
+        ingress.adjudications.unshift(promptJudgement);
+        if (promptJudgement.raised) ingress.rules.push({ id: "IN041", message: "The ingress adjudicator judged this request to need material above the Run's clearance.", paths: [promptJudgement.rationale || "prompt"] });
+      }
+      if (ingress.outcome === "denied") {
+        throw new Error("Airlock ingress gate denied this Run: " + ingress.rules.map((rule) => rule.id + " " + rule.message).join(" "));
+      }
+      const codexHomePath = await ensureAgentCodexHome(this.config, agentAtStart.id);
+      await this.store.mutate((database) => {
+        const stored = database.runs.find((item) => item.id === run.id);
+        if (!stored) return;
+        stored.transaction = transaction;
+        stored.ingress = ingress;
+        stored.auditEvents.push(auditEvent(stored, "workspace.staged", "Live workspace copied into an isolated transaction"), auditEvent(stored, "ingress.scanned", ingressSummary(ingress), ingress.rules.map((rule) => rule.id)));
+        if (ingress.trifecta) stored.auditEvents.push(auditEvent(stored, "ingress.trifecta", trifectaSummary(ingress.trifecta), ingress.trifecta.rules.map((rule) => rule.id)));
+        if (ingress.adjudications.length) stored.auditEvents.push(auditEvent(stored, "ingress.adjudicated", ingress.adjudications.length + " adjudication(s), " + ingress.adjudications.filter((record) => record.raised).length + " raised above the deterministic verdict", ingress.adjudications.filter((record) => record.raised).map((record) => (record.kind === "prompt" ? "IN041" : "IN040"))));
+        if (ingress.withheld.length) stored.auditEvents.push(auditEvent(stored, "ingress.withheld", ingress.withheld.length + " file(s) withheld from the Runtime: " + ingress.withheld.map((file) => file.path).join(", "), ingress.withheld.flatMap((file) => file.ruleIds)));
+        stored.auditEvents.push(auditEvent(stored, "runtime.started", "Container Runtime started with staging and private session mounts"));
+      });
       const result = await this.runner.run({
         runId: run.id,
         agentId: agentAtStart.id,
@@ -302,7 +360,7 @@ export class AgentService {
         threadId: agentAtStart.codexThreadId,
         policy: activeRun.policy!,
       });
-      const changes = await this.transactions.inspect(transaction);
+      const changes = await this.transactions.inspect(transaction, ingress.withheld);
       const decision = changes.length ? evaluateChanges(changes) : null;
       const inspectedAt = now();
       await this.store.mutate((database) => {
@@ -369,7 +427,9 @@ export class AgentService {
     if (run.status !== "awaiting_review" || !run.transaction) throw new HttpError(409, "Only Runs awaiting review may receive a decision");
     this.decisionsInProgress.add(runId);
     try {
-      if (decision === "approve") await this.transactions.promote(run.transaction); else await this.transactions.discard(run.transaction);
+      // Withheld originals are restored into staging first, so promoting an
+      // approved Run can never replace a live sensitive file with its tombstone.
+      if (decision === "approve") await this.transactions.promote(run.transaction, run.ingress?.withheld ?? []); else await this.transactions.discard(run.transaction);
       const timestamp = now();
       const decided = await this.store.mutate((database) => {
         const stored = database.runs.find((item) => item.id === runId);

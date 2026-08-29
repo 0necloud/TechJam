@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Database } from "./types.js";
 
 const emptyDatabase = (): Database => ({
-  version: 2,
+  version: 3,
   agents: [],
   messages: [],
   runs: [],
@@ -20,11 +20,11 @@ export class JsonStore {
     try {
       const raw = await readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw) as Database & { version: number };
-      if (![1, 2].includes(parsed.version) || !Array.isArray(parsed.agents)) {
+      if (![1, 2, 3].includes(parsed.version) || !Array.isArray(parsed.agents)) {
         throw new Error("Unsupported database format");
       }
       this.data = this.migrate(parsed);
-      if (parsed.version !== 2) await this.persist(this.data);
+      if (parsed.version !== 3) await this.persist(this.data);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;
@@ -35,7 +35,7 @@ export class JsonStore {
 
   private migrate(parsed: Database & { version: number }): Database {
     return {
-      version: 2,
+      version: 3,
       agents: parsed.agents,
       messages: Array.isArray(parsed.messages) ? parsed.messages : [],
       runs: (Array.isArray(parsed.runs) ? parsed.runs : []).map((run) => ({
@@ -45,6 +45,8 @@ export class JsonStore {
         transaction: run.transaction ?? null,
         changes: run.changes ?? [],
         policyDecision: run.policyDecision ?? null,
+        promptScreen: run.promptScreen ?? null,
+        ingress: run.ingress ?? null,
         decision: run.decision ?? null,
         auditEvents: run.auditEvents ?? [],
       })),

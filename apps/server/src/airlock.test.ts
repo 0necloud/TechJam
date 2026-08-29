@@ -5,20 +5,21 @@ import { afterEach, describe, expect, it } from "vitest";
 import { AgentService } from "./agent-service.js";
 import { loadConfig, writeCodexConfig } from "./config.js";
 import { JsonStore } from "./store.js";
+import type { IngressAdjudicator } from "./ingress-adjudicator.js";
 import type { AgentRunner, RunnerRequest } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
 
 const roots: string[] = [];
 afterEach(async () => { const { rm } = await import("node:fs/promises"); await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
-async function setup(write: (request: RunnerRequest) => Promise<void>) {
+async function setup(write: (request: RunnerRequest) => Promise<void>, adjudicator?: IngressAdjudicator) {
   const root = await mkdtemp(path.join(tmpdir(), "airlock-service-")); roots.push(root);
   const config = loadConfig({ NODE_ENV: "test", APP_DATA_DIR: path.join(root, "data"), AGENT_WORKSPACE_ROOT: path.join(root, "workspaces"), CODEX_HOME: path.join(root, "codex"), ARK_API_KEY: "fixture-key", ARK_MODEL: "fixture-model", RUNTIME_PROVIDER: "container" });
   await writeCodexConfig(config);
   const requests: RunnerRequest[] = [];
   const runner: AgentRunner = { run: async (request) => { requests.push(request); await write(request); return { output: "done token=super-secret-value", threadId: "proposed-thread", usage: null }; }, cancel: async () => false, isAvailable: async () => true };
   const store = new JsonStore(path.join(root, "data", "db.json"));
-  const service = new AgentService(config, store, new WorkspaceManager(config.workspaceRoot), runner);
+  const service = new AgentService(config, store, new WorkspaceManager(config.workspaceRoot), runner, adjudicator);
   await service.initialize(); const agent = await service.createAgent({ name: "Guarded" });
   return { service, agent, requests, config, store, runner };
 }
@@ -94,6 +95,86 @@ describe("Airlock service integration", () => {
     expect(restarted.getRun(run.id).status).toBe("awaiting_review");
     expect(restarted.getAgent(agent.id).status).toBe("review");
     await restarted.rejectRun(run.id);
+  });
+
+  it("withholds a classified document from the Runtime and restores it on approval", async () => {
+    let mounted = "";
+    const { service, agent } = await setup(async (request) => {
+      mounted = await readFile(path.join(request.workspacePath, "docs", "handbook.md"), "utf8");
+      await writeFile(path.join(request.workspacePath, "summary.md"), "summary\n");
+    });
+    await mkdir(path.join(agent.workspacePath, "docs"), { recursive: true });
+    await writeFile(path.join(agent.workspacePath, "docs", "handbook.md"), "COMPANY CONFIDENTIAL\n\nUnreleased pricing model.\n");
+
+    const { run } = await service.sendMessage(agent.id, "write a summary of the docs folder");
+    await waitFor(service, run.id, "awaiting_review");
+
+    // The Runtime saw a tombstone, never the marked document.
+    expect(mounted).toContain("[AIRLOCK WITHHELD]");
+    expect(mounted).not.toContain("Unreleased pricing model");
+
+    const evidence = await service.getRunEvidence(run.id);
+    expect(evidence.ingress?.withheld.map((file) => file.path)).toEqual(["docs/handbook.md"]);
+    expect(evidence.ingress?.rules.map((rule) => rule.id)).toContain("IN021");
+    expect(evidence.timeline.map((event) => event.type)).toEqual(expect.arrayContaining(["prompt.screened", "ingress.scanned", "ingress.withheld"]));
+    // The tombstone is the gate's own substitution, so it is not an Agent change.
+    expect(evidence.changes.map((change) => change.path)).toEqual(["summary.md"]);
+
+    await service.approveRun(run.id, "reviewed");
+    expect(await readFile(path.join(agent.workspacePath, "docs", "handbook.md"), "utf8")).toContain("Unreleased pricing model");
+    expect(await readFile(path.join(agent.workspacePath, "summary.md"), "utf8")).toContain("summary");
+  });
+
+  it("denies the change set when the Runtime edits a withheld file", async () => {
+    const { service, agent } = await setup(async (request) => writeFile(path.join(request.workspacePath, "notes.md"), "CONFIDENTIAL\n\noverwritten by the Runtime\n"));
+    await writeFile(path.join(agent.workspacePath, "notes.md"), "STRICTLY CONFIDENTIAL\n\noriginal briefing\n");
+
+    const { run } = await service.sendMessage(agent.id, "rewrite the notes");
+    await waitFor(service, run.id, "rejected");
+
+    const evidence = await service.getRunEvidence(run.id);
+    expect(evidence.policyDecision?.rules.map((rule) => rule.id)).toContain("TC007");
+    expect(await readFile(path.join(agent.workspacePath, "notes.md"), "utf8")).toContain("original briefing");
+  });
+
+  it("withholds an unmarked document once the adjudicator judges it sensitive", async () => {
+    let mounted = "";
+    const adjudicator: IngressAdjudicator = {
+      name: "fake",
+      judge: async (request) => (request.path === "docs/board-notes.md" ? { level: "confidential", confidence: "high", rationale: "Unannounced acquisition terms." } : null),
+    };
+    const { service, agent } = await setup(async (request) => {
+      mounted = await readFile(path.join(request.workspacePath, "docs", "board-notes.md"), "utf8");
+      await writeFile(path.join(request.workspacePath, "summary.md"), "summary\n");
+    }, adjudicator);
+    await mkdir(path.join(agent.workspacePath, "docs"), { recursive: true });
+    // No banner, no credential, no telling file name: deterministic rules pass it.
+    await writeFile(path.join(agent.workspacePath, "docs", "board-notes.md"), "Notes from the meeting.\n\nWe close the Helios acquisition in Q3 for 40 million.\n");
+
+    const { run } = await service.sendMessage(agent.id, "summarise the docs folder");
+    await waitFor(service, run.id, "awaiting_review");
+
+    expect(mounted).toContain("[AIRLOCK WITHHELD]");
+    expect(mounted).not.toContain("Helios acquisition");
+    const evidence = await service.getRunEvidence(run.id);
+    expect(evidence.ingress?.withheld).toMatchObject([{ path: "docs/board-notes.md", source: "agent" }]);
+    expect(evidence.ingress?.adjudications.some((record) => record.raised)).toBe(true);
+    expect(evidence.timeline.map((event) => event.type)).toContain("ingress.adjudicated");
+
+    await service.approveRun(run.id, "reviewed");
+    expect(await readFile(path.join(agent.workspacePath, "docs", "board-notes.md"), "utf8")).toContain("Helios acquisition");
+  });
+
+  it("sanitizes a pasted credential before the prompt reaches the Runtime", async () => {
+    const { service, agent, requests } = await setup(async (request) => writeFile(path.join(request.workspacePath, "safe.ts"), "export {};\n"));
+    const { run, message } = await service.sendMessage(agent.id, "call the API with api_key=sk-live-9f2b7c1d4e6a8b0c2d4e");
+    await waitFor(service, run.id, "awaiting_review");
+
+    expect(requests[0]?.prompt).not.toContain("sk-live-9f2b7c1d4e6a8b0c2d4e");
+    expect(message.content).not.toContain("sk-live-9f2b7c1d4e6a8b0c2d4e");
+    const evidence = await service.getRunEvidence(run.id);
+    expect(evidence.promptScreen?.outcome).toBe("sanitized");
+    expect(JSON.stringify(evidence)).not.toContain("sk-live-9f2b7c1d4e6a8b0c2d4e");
   });
 
   it("deletion discards pending staging before archiving the live workspace", async () => {

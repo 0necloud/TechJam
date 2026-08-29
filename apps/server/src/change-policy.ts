@@ -8,6 +8,7 @@ const messages: Record<string, string> = {
   TC004: "Symbolic links are blocked because they can escape the workspace.",
   TC005: "Credential-like content cannot be promoted.",
   TC006: "The change set exceeds configured size limits.",
+  TC007: "A file withheld by the ingress gate was modified inside the Runtime.",
   TC100: "Workspace changes require human review before promotion.",
 };
 const credential = /(?:api[_-]?key|access[_-]?token|password|client[_-]?secret)\s*[:=]\s*["']?[A-Za-z0-9_\-\/.+=]{8,}/i;
@@ -45,6 +46,7 @@ export function evaluateChanges(changes: FileChange[], options: ChangePolicyOpti
     if (change.symbolicLink) add("TC004", change.path);
     if (change.patch && credential.test(change.patch)) add("TC005", change.path);
     if (change.size > maxFileBytes) add("TC006", change.path);
+    if (change.withheldTamper) add("TC007", change.path);
   }
   if (changes.length > maxFiles || total > maxTotalBytes) add("TC006", "(change set)");
   const rules: PolicyRule[] = [...violations].map(([id, paths]) => ({ id, message: messages[id]!, paths: [...paths] }));
