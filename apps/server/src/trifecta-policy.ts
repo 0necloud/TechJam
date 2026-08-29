@@ -64,10 +64,17 @@ export function assessTrifecta(input: TrifectaInput): TrifectaDecision {
     },
     {
       capability: "external-comms",
-      present: input.networkMode !== "none",
+      // An Ark-only gateway is not an exfiltration channel: the Runtime can
+      // reach exactly one destination, and that destination answers back to the
+      // operator rather than to whoever wrote the untrusted content. So this leg
+      // counts as constrained, not held — which is what lets a gatewayed Run
+      // keep its clearance instead of paying for the mitigation in readability.
+      present: input.networkMode !== "none" && input.networkMode !== "ark-gateway",
       reason: input.networkMode === "none"
         ? "The Runtime has no network"
-        : "The Runtime reaches the network over " + input.networkMode + ", which is not Ark-only egress",
+        : input.networkMode === "ark-gateway"
+          ? "Egress is constrained to Ark through the gateway, so there is no channel to an attacker"
+          : "The Runtime reaches the network over " + input.networkMode + ", which is not Ark-only egress",
       evidence: [input.networkMode],
     },
   ];

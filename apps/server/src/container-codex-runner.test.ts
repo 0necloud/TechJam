@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.js";
 import {
+  buildRuntimeEnvironment,
   buildContainerRunArgs,
   containerName,
 } from "./container-codex-runner.js";
+import { verifyGatewayToken } from "./gateway-token.js";
 
 describe("Container Codex runner", () => {
-  const policy = (runId: string, agentId: string) => ({ id: "policy", runId, agentId, runtime: "container" as const, workspaceAccess: "staging-only" as const, sessionAccess: "agent-only" as const, networkMode: "current-bridge" as const, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(), revokedAt: null, maxDurationMs: 60_000 });
+  const policy = (runId: string, agentId: string, networkMode: "current-bridge" | "ark-gateway" = "current-bridge") => ({ id: "policy", runId, agentId, runtime: "container" as const, workspaceAccess: "staging-only" as const, sessionAccess: "agent-only" as const, networkMode, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(), revokedAt: null, maxDurationMs: 60_000 });
   it("builds an isolated Docker/Podman-compatible invocation", () => {
     const config = loadConfig({
       NODE_ENV: "test",
@@ -68,5 +70,40 @@ describe("Container Codex runner", () => {
     );
     expect(args.slice(-3)).toEqual(["resume", "thread-123", "continue"]);
     expect(args).not.toContain("keep-id");
+  });
+
+  it("joins the internal gateway network instead of an internet bridge", () => {
+    const config = loadConfig({
+      NODE_ENV: "test",
+      CODEX_HOME: "/tmp/codex-home",
+      RUNTIME_PROVIDER: "container",
+      RUNTIME_NETWORK_MODE: "ark-gateway",
+      ARK_GATEWAY_SECRET: "test-signing-secret-with-at-least-32-characters",
+      ARK_GATEWAY_NETWORK: "airlock-test-internal",
+      ARK_API_KEY: "real-key-that-must-stay-out-of-the-runtime",
+    });
+    const request = {
+      runId: "run",
+      agentId: "agent",
+      workspacePath: "/tmp/workspace",
+      codexHomePath: "/tmp/codex-home/agent",
+      prompt: "work privately",
+      threadId: null,
+      policy: policy("run", "agent", "ark-gateway"),
+    };
+    const args = buildContainerRunArgs(request, config);
+    const networkIndex = args.indexOf("--network");
+    expect(args[networkIndex + 1]).toBe("airlock-test-internal");
+    expect(args[networkIndex + 1]).not.toBe("bridge");
+    expect(args).toContain("ARK_API_KEY");
+    expect(args.join(" ")).not.toContain(config.arkApiKey);
+    expect(args.join(" ")).not.toContain(config.arkGatewaySecret);
+    const environment = buildRuntimeEnvironment(request, config, { PATH: "/usr/bin" });
+    expect(environment.ARK_API_KEY).not.toBe(config.arkApiKey);
+    expect(verifyGatewayToken(environment.ARK_API_KEY!, config.arkGatewaySecret)).toMatchObject({
+      runId: "run",
+      agentId: "agent",
+      policyId: "policy",
+    });
   });
 });

@@ -5,6 +5,7 @@ repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
 
 runtime_image="${CONTAINER_RUNTIME_IMAGE:-volc-agent-runtime:local}"
+gateway_image="${ARK_GATEWAY_IMAGE:-airlock-ark-gateway:local}"
 runtime_base_image="${CONTAINER_RUNTIME_BASE_IMAGE:-node:22-bookworm-slim}"
 runtime_apt_mirror="${CONTAINER_APT_MIRROR:-}"
 runtime_apt_security_mirror="${CONTAINER_APT_SECURITY_MIRROR:-}"
@@ -105,6 +106,19 @@ else
   export CODEX_HOME="${CODEX_HOME:-$local_state_root/codex-home}"
 fi
 export RUNTIME_INSTANCE_ID="${RUNTIME_INSTANCE_ID:-local-$(id -u)-$(printf '%s' "$repo_dir" | cksum | awk '{print $1}')}"
+export RUNTIME_NETWORK_MODE="${RUNTIME_NETWORK_MODE:-ark-gateway}"
+if [[ "$RUNTIME_NETWORK_MODE" != "ark-gateway" && "$RUNTIME_NETWORK_MODE" != "current-bridge" ]]; then
+  log "RUNTIME_NETWORK_MODE must be ark-gateway or current-bridge."
+  exit 2
+fi
+export ARK_BASE_URL="${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}"
+if [[ "$RUNTIME_NETWORK_MODE" == "ark-gateway" ]]; then
+  export ARK_GATEWAY_SECRET="${ARK_GATEWAY_SECRET:-$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")}"
+  export ARK_GATEWAY_NETWORK="${ARK_GATEWAY_NETWORK:-airlock-$RUNTIME_INSTANCE_ID-runtime}"
+  export ARK_GATEWAY_CONTAINER="${ARK_GATEWAY_CONTAINER:-airlock-$RUNTIME_INSTANCE_ID-ark-gateway}"
+  export ARK_GATEWAY_URL="${ARK_GATEWAY_URL:-http://ark-gateway:8080/api/v3}"
+  export ARK_GATEWAY_IMAGE="$gateway_image"
+fi
 
 mkdir -p "$APP_DATA_DIR" "$AGENT_WORKSPACE_ROOT" "$CODEX_HOME"
 log "Persistent state: $local_state_root"
@@ -164,6 +178,9 @@ cleanup() {
       [[ -n "$container_id" ]] && "$engine" rm --force "$container_id" >/dev/null 2>&1 || true
     done <<<"$container_ids"
   fi
+  if [[ "$RUNTIME_NETWORK_MODE" == "ark-gateway" ]]; then
+    bash "$repo_dir/scripts/manage-ark-gateway.sh" stop || true
+  fi
 }
 trap cleanup EXIT INT TERM
 
@@ -172,6 +189,20 @@ cleanup
 
 log "Building the local Web and API."
 npm run build
+
+if [[ "$RUNTIME_NETWORK_MODE" == "ark-gateway" ]]; then
+  log "Building $gateway_image from Dockerfile.gateway."
+  "$engine" build \
+    --file Dockerfile.gateway \
+    --build-arg "NODE_IMAGE=$runtime_base_image" \
+    --tag "$gateway_image" \
+    .
+  bash "$repo_dir/scripts/manage-ark-gateway.sh" start
+  unset ARK_API_KEY
+  log "Confidential network mode enabled: Runtime containers can reach Ark only through the gateway."
+else
+  log "Connected network mode enabled: Runtime containers have ordinary outbound internet access."
+fi
 
 log "Open http://localhost:$PORT"
 npm start

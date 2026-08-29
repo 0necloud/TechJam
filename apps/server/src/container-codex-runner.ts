@@ -10,8 +10,33 @@ import type {
   RunnerResult,
 } from "./types.js";
 import { validateRunPolicy } from "./run-policy.js";
+import { mintGatewayToken } from "./gateway-token.js";
 
 const execFileAsync = promisify(execFile);
+
+export function buildEngineEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { NO_COLOR: "1" };
+  for (const name of [
+    "PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "XDG_RUNTIME_DIR",
+  ] as const) {
+    if (source[name] !== undefined) environment[name] = source[name];
+  }
+  return environment;
+}
+
+export function buildRuntimeEnvironment(
+  request: RunnerRequest,
+  config: AppConfig,
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return {
+    ...buildEngineEnvironment(source),
+    ARK_API_KEY:
+      request.policy.networkMode === "ark-gateway"
+        ? mintGatewayToken(request.policy, config.arkGatewaySecret)
+        : config.arkApiKey,
+  };
+}
 
 interface ActiveContainer {
   child: ChildProcess;
@@ -56,7 +81,11 @@ export function buildContainerRunArgs(
     "io.codejam.instance-id=" + config.runtimeInstanceId,
     ...(engineName === "podman" ? ["--userns", "keep-id"] : []),
     "--network",
-    request.policy.networkMode === "none" ? "none" : "bridge",
+    request.policy.networkMode === "none"
+      ? "none"
+      : request.policy.networkMode === "ark-gateway"
+        ? config.arkGatewayNetwork
+        : "bridge",
     "--read-only",
     "--tmpfs",
     "/tmp:rw,nosuid,nodev,noexec,size=64m",
@@ -101,13 +130,32 @@ export class ContainerCodexRunner implements AgentRunner {
     try {
       await execFileAsync(this.config.containerEngine, ["version"], {
         timeout: 5_000,
-        env: this.childEnvironment(),
+        env: buildEngineEnvironment(),
       });
       await execFileAsync(
         this.config.containerEngine,
         ["image", "inspect", this.config.containerRuntimeImage],
-        { timeout: 5_000, env: this.childEnvironment() },
+        { timeout: 5_000, env: buildEngineEnvironment() },
       );
+      if (this.config.runtimeNetworkMode === "ark-gateway") {
+        await execFileAsync(
+          this.config.containerEngine,
+          ["network", "inspect", this.config.arkGatewayNetwork],
+          { timeout: 5_000, env: buildEngineEnvironment() },
+        );
+        const gateway = await execFileAsync(
+          this.config.containerEngine,
+          [
+            "container",
+            "inspect",
+            "--format",
+            "{{.State.Running}}",
+            this.config.arkGatewayContainer,
+          ],
+          { timeout: 5_000, env: buildEngineEnvironment() },
+        );
+        if (gateway.stdout.trim() !== "true") return false;
+      }
       return true;
     } catch {
       return false;
@@ -129,7 +177,7 @@ export class ContainerCodexRunner implements AgentRunner {
       active.termination = execFileAsync(
         this.config.containerEngine,
         ["rm", "--force", active.containerName],
-        { timeout: 8_000, env: this.childEnvironment() },
+        { timeout: 8_000, env: buildEngineEnvironment() },
       )
         .then(() => undefined)
         .catch(() => {
@@ -152,7 +200,7 @@ export class ContainerCodexRunner implements AgentRunner {
       buildContainerRunArgs(request, this.config),
       {
         cwd: request.workspacePath,
-        env: this.childEnvironment(),
+        env: buildRuntimeEnvironment(request, this.config),
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -241,21 +289,4 @@ export class ContainerCodexRunner implements AgentRunner {
     }
   }
 
-  private childEnvironment(): NodeJS.ProcessEnv {
-    const environment: NodeJS.ProcessEnv = {
-      ARK_API_KEY: this.config.arkApiKey,
-      NO_COLOR: "1",
-    };
-    for (const name of [
-      "PATH",
-      "HOME",
-      "TMPDIR",
-      "LANG",
-      "LC_ALL",
-      "XDG_RUNTIME_DIR",
-    ] as const) {
-      if (process.env[name] !== undefined) environment[name] = process.env[name];
-    }
-    return environment;
-  }
 }

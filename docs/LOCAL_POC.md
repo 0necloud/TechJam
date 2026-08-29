@@ -2,7 +2,8 @@
 
 The local profile runs the React/Fastify control plane on macOS or Linux and
 starts every Codex turn in a disposable Docker, Colima, or Podman container.
-Only the Volcengine Ark model API is remote.
+Only model inference is remote: the local Codex Agent calls the Volcengine Ark
+API, which serves the selected cloud model.
 
 ## Start
 
@@ -17,7 +18,8 @@ ARK_API_KEY=your-ark-api-key ARK_MODEL=ep-your-endpoint-id npm run poc
 ```
 
 Open <http://localhost:3000>. Press `Ctrl+C` to stop the server and remove this
-instance's remaining Runtime containers.
+instance's remaining Runtime containers, gateway container, and internal
+network.
 
 Force an engine with `CONTAINER_ENGINE=docker` or
 `CONTAINER_ENGINE=podman`. Colima uses the Docker CLI.
@@ -34,6 +36,30 @@ Set `LOCAL_POC_DATA_ROOT` to use another directory.
 Each turn mounts only the selected Agent workspace and Codex session directory.
 Default limits are 2 CPUs, 2 GiB memory, 256 processes, dropped capabilities,
 and `no-new-privileges`.
+
+The supported startup path defaults to `RUNTIME_NETWORK_MODE=ark-gateway`:
+
+- It creates a per-instance network with Docker/Podman's `--internal` flag.
+- Runtime containers join only that network and cannot route to public hosts.
+- A local gateway joins the internal network and an external bridge.
+- Codex receives a signed, expiring Run token instead of the Ark API key.
+- The gateway accepts only the Ark Responses API, validates the token, injects
+  the real key, and forwards to the fixed `ARK_BASE_URL`.
+- Startup proves a Runtime peer cannot reach `example.com` directly and can
+  reach the gateway health endpoint. Either failure stops startup.
+
+This mode blocks npm, GitHub, arbitrary APIs, and attempted exfiltration to
+other hosts. Use connected mode explicitly for a task that requires them:
+
+```bash
+RUNTIME_NETWORK_MODE=current-bridge \
+ARK_API_KEY=your-ark-api-key \
+ARK_MODEL=ep-your-endpoint-id \
+npm run poc
+```
+
+Connected mode gives the Runtime ordinary bridge egress and the real Ark key.
+It is functional compatibility, not confidential execution.
 
 Codex requests `workspace-write`. If the Linux kernel lacks Landlock, startup
 warns and disables only the inner Codex sandbox. The outer container limits
@@ -121,6 +147,7 @@ Check Runtime readiness:
 ```bash
 docker info                       # Or: podman info
 docker image inspect volc-agent-runtime:local
+docker image inspect airlock-ark-gateway:local
 curl http://localhost:3000/api/system
 ```
 

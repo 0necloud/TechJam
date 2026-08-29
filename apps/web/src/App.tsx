@@ -134,6 +134,66 @@ function IngressControls({ settings, onChange, busy }: { settings: IngressSettin
   );
 }
 
+type StageState = "passed" | "diverted" | "blocked" | "pending";
+
+interface Stage {
+  key: string;
+  label: string;
+  detail: string;
+  state: StageState;
+}
+
+/**
+ * The middleware pipeline for one Run, derived from what the Run actually
+ * recorded rather than from a fixed picture. A stage is only "passed" if the
+ * evidence says it happened, so a denied or failed Run shows where it stopped
+ * instead of implying the whole flow completed.
+ */
+function pipelineStages(evidence: RunEvidence): Stage[] {
+  const types = new Set(evidence.timeline.map((event) => event.type));
+  const ingress = evidence.ingress;
+  const decision = evidence.policyDecision;
+  const seen = (type: string): StageState => (types.has(type) ? "passed" : "pending");
+
+  const promptState: StageState = evidence.promptScreen?.outcome === "denied" ? "blocked" : evidence.promptScreen?.outcome === "sanitized" ? "diverted" : seen("prompt.screened");
+  const trifectaState: StageState = !ingress?.trifecta ? seen("ingress.trifecta") : ingress.trifecta.outcome === "mitigated" ? "diverted" : ingress.trifecta.outcome === "unmitigated" ? "blocked" : "passed";
+  const withholdState: StageState = !ingress ? "pending" : ingress.outcome === "denied" ? "blocked" : ingress.withheld.length ? "diverted" : "passed";
+  const policyState: StageState = decision?.outcome === "denied" ? "blocked" : types.has("workspace.inspected") ? "passed" : "pending";
+  const reviewState: StageState =
+    evidence.decision?.decision === "approve" ? "passed" : evidence.decision?.decision === "reject" ? "blocked" : evidence.run.status === "awaiting_review" ? "diverted" : types.has("run.completed") ? "passed" : "pending";
+
+  return [
+    { key: "prompt", label: "Prompt screen", detail: evidence.promptScreen?.outcome === "sanitized" ? "credential stripped" : evidence.promptScreen?.requestsSensitiveAccess ? "flagged sensitive intent" : "clean", state: promptState },
+    { key: "stage", label: "Stage copy", detail: "live workspace untouched", state: seen("workspace.staged") },
+    { key: "classify", label: "Classify", detail: ingress ? ingress.scannedFiles + " files · " + formatBytes(ingress.bytesSkipped) + " never read" : "—", state: seen("ingress.scanned") },
+    { key: "trifecta", label: "Trifecta", detail: ingress?.trifecta ? ingress.trifecta.present.length + " of 3 held" : "—", state: trifectaState },
+    { key: "withhold", label: "Withhold", detail: ingress ? (ingress.withheld.length ? ingress.withheld.length + " withheld" : "nothing above clearance") : "—", state: withholdState },
+    { key: "runtime", label: "Runtime", detail: evidence.policy?.networkMode ?? "container", state: seen("runtime.completed") },
+    { key: "policy", label: "Change policy", detail: decision ? decision.rules.map((rule) => rule.id).join(" ") : "no changes", state: policyState },
+    { key: "review", label: "Promotion", detail: evidence.decision?.decision ?? (evidence.run.status === "awaiting_review" ? "awaiting you" : "nothing to promote"), state: reviewState },
+  ];
+}
+
+function RunPipeline({ evidence }: { evidence: RunEvidence }) {
+  const stages = pipelineStages(evidence);
+  return (
+    <div className="pipeline" role="list" aria-label="Middleware stages for this Run">
+      {stages.map((stage, index) => (
+        <div className="pipeline-stage" role="listitem" key={stage.key} style={{ animationDelay: index * 55 + "ms" }}>
+          <div className={"pipe-node node-" + stage.state}>
+            <span className="pipe-dot" aria-hidden="true" />
+          </div>
+          <div className="pipe-text">
+            <span className="pipe-label">{stage.label}</span>
+            <span className="pipe-detail">{stage.detail}</span>
+          </div>
+          {index < stages.length - 1 && <span className={"pipe-link link-" + stage.state} aria-hidden="true" />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const STOP_VERDICT: Record<StopReason, string> = {
   "name-only": "stopped before opening the file",
   "metadata-only": "stopped after the document properties",
@@ -793,6 +853,7 @@ export default function App() {
           <span>
             {system?.arkModel ?? "Ark model not configured"}
             {system?.containerEngine ? " · " + system.containerEngine : ""}
+            {system?.runtimeNetworkMode ? " · " + system.runtimeNetworkMode : ""}
           </span>
         </div>
 
@@ -978,10 +1039,11 @@ export default function App() {
                         <div><span className="eyebrow">Airlock evidence</span><h3>{evidence.run.status === "awaiting_review" ? "Changes quarantined for review" : "Run outcome: " + evidence.run.status}</h3></div>
                         <span className={"risk risk-" + (evidence.policyDecision?.risk ?? "low")}>{evidence.policyDecision?.risk ?? "no-change"} risk</span>
                       </div>
+                      <RunPipeline evidence={evidence} />
                     </Surface>
                     <Surface id={2} active={activeContribution} onHover={setActiveContribution}>
                       <div className="policy-facts">
-                        <span>Container Runtime</span><span>Staging-only workspace</span><span>Private Agent session</span><span>{evidence.policy?.networkMode ?? "policy unavailable"}</span>
+                        <span>Container Runtime</span><span>Staging-only workspace</span><span>Private Agent session</span><span>{evidence.policy?.networkMode === "ark-gateway" ? "Ark-only egress" : evidence.policy?.networkMode === "current-bridge" ? "Connected internet" : evidence.policy?.networkMode === "none" ? "No network" : "Policy unavailable"}</span>
                       </div>
                     </Surface>
                     {evidence.ingress && (

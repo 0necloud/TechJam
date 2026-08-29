@@ -64,6 +64,8 @@ export interface SystemInfo {
   codexAvailable: boolean;
   codexSandboxMode: string;
   runtimeProvider: "local-process" | "container";
+  runtimeNetworkMode: "current-bridge" | "ark-gateway" | "none";
+  arkCredentialLocation: "gateway" | "runtime";
   containerEngine: string | null;
   runtime: string;
 }

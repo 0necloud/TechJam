@@ -276,7 +276,7 @@ export class AgentService {
     if (!isArkConfigured(this.config)) {
       throw new HttpError(
         503,
-        "Ark is not configured. Set ARK_API_KEY and ARK_MODEL, then restart.",
+        "Ark is not configured. Set ARK_MODEL and configure the selected Ark credential route, then restart.",
       );
     }
     // Ingress point 1: judge the request before anything is staged. A pasted
@@ -356,6 +356,9 @@ export class AgentService {
       arkConfigured: isArkConfigured(this.config),
       arkBaseUrl: this.config.arkBaseUrl,
       arkModel: this.config.arkModel || null,
+      runtimeNetworkMode: this.config.runtimeNetworkMode,
+      arkCredentialLocation:
+        this.config.runtimeNetworkMode === "ark-gateway" ? "gateway" : "runtime",
       codexAvailable: await this.runner.isAvailable(),
       codexSandboxMode: this.config.codexSandboxMode,
       ingress: this.ingressOptions,
@@ -379,7 +382,13 @@ export class AgentService {
         storedRun.status = "running";
         storedRun.startedAt = now();
         storedRun.policy = createRunPolicy(run.id, agentAtStart.id, this.config);
-        storedRun.auditEvents.push(auditEvent(storedRun, "policy.created", "Staging-only container policy created"));
+        storedRun.auditEvents.push(auditEvent(
+          storedRun,
+          "policy.created",
+          "Staging-only container policy created with " +
+            storedRun.policy.networkMode +
+            " networking",
+        ));
       }
     });
     try {
@@ -389,6 +398,7 @@ export class AgentService {
       if (this.config.runtimeProvider !== "container") throw new Error("Airlock guarded Runs require RUNTIME_PROVIDER=container");
       transaction = await this.transactions.prepare(run.id, agentAtStart.workspacePath);
       const activeRun = this.getRun(run.id);
+
       // Ingress point 3: classify the staged copy, assess the lethal trifecta,
       // and pull anything above the resulting clearance back out. This is the
       // last moment a read can be stopped — after the mount exists, Codex reads
@@ -421,8 +431,9 @@ export class AgentService {
         if (ingress.trifecta) stored.auditEvents.push(auditEvent(stored, "ingress.trifecta", trifectaSummary(ingress.trifecta), ingress.trifecta.rules.map((rule) => rule.id)));
         if (ingress.adjudications.length) stored.auditEvents.push(auditEvent(stored, "ingress.adjudicated", ingress.adjudications.length + " adjudication(s), " + ingress.adjudications.filter((record) => record.raised).length + " raised above the deterministic verdict", ingress.adjudications.filter((record) => record.raised).map((record) => (record.kind === "prompt" ? "IN041" : "IN040"))));
         if (ingress.withheld.length) stored.auditEvents.push(auditEvent(stored, "ingress.withheld", ingress.withheld.length + " file(s) withheld from the Runtime: " + ingress.withheld.map((file) => file.path).join(", "), ingress.withheld.flatMap((file) => file.ruleIds)));
-        stored.auditEvents.push(auditEvent(stored, "runtime.started", "Container Runtime started with staging and private session mounts"));
+        stored.auditEvents.push(auditEvent(stored, "runtime.started", "Container Runtime started with staging, private session, and " + stored.policy?.networkMode + " network policy"));
       });
+
       const result = await this.runner.run({
         runId: run.id,
         agentId: agentAtStart.id,

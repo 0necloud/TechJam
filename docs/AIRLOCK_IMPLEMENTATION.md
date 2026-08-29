@@ -1,10 +1,11 @@
 # Airlock: Capability-Scoped Transactional Agent Runtime
 
-> Implementation handover status (2026-08-27): no application code has been
-> changed for Airlock. The repository currently contains planning documents
-> under `docs/workstreams/`. The last Windows validation attempt stopped before
-> compilation because dependencies were not installed. Full implementation and
-> Runtime acceptance should be performed in WSL2/Linux.
+> Implementation status (2026-08-29): the transactional Airlock core and the
+> optional Ark-only egress gateway are implemented. Deterministic server tests
+> cover policy, transaction, gateway-token, forwarding, denial, and lifecycle
+> behavior. A Kali WSL2 Docker 28.5.2 acceptance run confirmed the Linux build,
+> all 44 tests, internal-network egress denial, gateway reachability, and live
+> rejection of unrelated or unsigned gateway requests.
 
 ## 1. One-sentence solution
 
@@ -478,21 +479,29 @@ The POC will not claim to provide:
 - A general-purpose policy engine
 - Complete protection against container escape
 - Arbitrary secure access to host-installed programs
-- Perfect network isolation without an Ark gateway
+- Production-grade network isolation or a general package/network broker
 - Production multi-process or distributed storage
 - Mandatory ECS deployment
 
-## 19. Optional network-security extension
+## 19. Implemented network-security extension
 
-If time permits, add an Ark gateway:
+Supported POC and host-deployment paths now add an Ark gateway:
 
 ```text
-Codex container → short-lived Run token → Ark gateway → real Ark credential → ModelArk
+Codex container → short-lived Run token → Ark gateway → real Ark credential → Ark model
 ```
 
 The Runtime container joins an internal network and can reach only the gateway. The gateway holds the real Ark key and rejects unrelated destinations.
 
-Without this gateway, unrestricted outbound access and credential exfiltration must be documented as residual risks.
+The gateway accepts only `POST /api/v3/responses...`, verifies an HMAC-signed
+token containing the policy, Run, Agent, and expiry identifiers, then replaces
+that token with the real Ark key when calling the fixed upstream. Startup
+proves that a Runtime peer cannot reach a public destination directly and can
+reach the gateway health endpoint.
+
+`current-bridge` remains an explicit compatibility mode for npm, GitHub, and
+other public tools. It restores unrestricted outbound access and exposes the
+Ark key to the Runtime, so evidence must identify that weaker mode.
 
 ## 20. Definition of done
 

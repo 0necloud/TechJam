@@ -19,6 +19,10 @@ services:
       AGENT_WORKSPACE_ROOT: /app/workspaces
       CODEX_HOME: /app/codex-home
       CODEX_SANDBOX_MODE: ${CODEX_SANDBOX_MODE:-workspace-write}
+      # This legacy profile has no sibling gateway or Docker engine. Keep it in
+      # connected mode so the control plane can start; guarded Runs still fail
+      # closed because it cannot launch a disposable Runtime container.
+      RUNTIME_NETWORK_MODE: current-bridge
     ports:
       - "${PUBLIC_PORT:-3000}:3000"
     volumes:

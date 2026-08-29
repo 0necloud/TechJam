@@ -8,7 +8,7 @@ export function createRunPolicy(runId: string, agentId: string, config: AppConfi
   return {
     id: randomUUID(), runId, agentId, runtime: "container",
     workspaceAccess: "staging-only", sessionAccess: "agent-only",
-    networkMode: "current-bridge", createdAt: new Date(created).toISOString(),
+    networkMode: config.runtimeNetworkMode, createdAt: new Date(created).toISOString(),
     expiresAt: new Date(created + config.codexTimeoutMs).toISOString(),
     revokedAt: null, maxDurationMs: config.codexTimeoutMs,
   };
@@ -24,6 +24,7 @@ export function validateRunPolicy(request: RunnerRequest, config: AppConfig): vo
   if (config.runtimeProvider !== "container") throw new Error("Airlock guarded Runs require the container Runtime");
   if (policy.runId !== request.runId || policy.agentId !== request.agentId) throw new Error("Run policy identity mismatch");
   if (policy.runtime !== "container" || policy.workspaceAccess !== "staging-only" || policy.sessionAccess !== "agent-only") throw new Error("Unsupported Run policy capability");
+  if (policy.networkMode !== config.runtimeNetworkMode) throw new Error("Run policy network mode does not match the configured Runtime boundary");
   if (policy.revokedAt) throw new Error("Run policy has been revoked");
   if (Date.parse(policy.expiresAt) <= Date.now()) throw new Error("Run policy has expired");
   const expectedTransactionRoot = path.join(config.workspaceRoot, ".transactions", request.runId);
