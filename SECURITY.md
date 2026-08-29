@@ -15,10 +15,12 @@ credentials, personal data, or exploit details in an issue.
 - No CSRF protection
 - No per-Agent container boundary in ECS mode
 - Ordinary local containers, not hardened multi-tenant sandboxes
-- Broad outbound network access
+- Broad outbound network access when explicitly using `current-bridge` mode
 - Prompt-triggered command and file execution
-- Ark key available to the server and active Runtime container
+- Ark key available to the gateway container and deployment operator; in
+  `current-bridge` mode it is also available to the active Runtime
 - Ark key stored in Terraform POC state
+- Ark gateway is a POC HTTP boundary, not a hardened production egress service
 
 ## Safe use
 
@@ -27,6 +29,8 @@ credentials, personal data, or exploit details in an issue.
 - Keep local use on loopback and restrict ECS Web and SSH CIDRs.
 - Add HTTPS before sending the shared token over an untrusted network.
 - Never mount production data or provide Volcengine account AK/SK to Agents.
+- Prefer the default `ark-gateway` mode. Use `current-bridge` only for Runs that
+  genuinely need npm, GitHub, or other public services.
 - Stop the POC, destroy test resources, and revoke keys after the event.
 
 Codex uses `workspace-write` when Landlock is available. On unsupported kernels,

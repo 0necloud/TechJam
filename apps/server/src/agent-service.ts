@@ -190,7 +190,7 @@ export class AgentService {
     if (!isArkConfigured(this.config)) {
       throw new HttpError(
         503,
-        "Ark is not configured. Set ARK_API_KEY and ARK_MODEL, then restart.",
+        "Ark is not configured. Set ARK_MODEL and configure the selected Ark credential route, then restart.",
       );
     }
     const timestamp = now();
@@ -259,6 +259,9 @@ export class AgentService {
       arkConfigured: isArkConfigured(this.config),
       arkBaseUrl: this.config.arkBaseUrl,
       arkModel: this.config.arkModel || null,
+      runtimeNetworkMode: this.config.runtimeNetworkMode,
+      arkCredentialLocation:
+        this.config.runtimeNetworkMode === "ark-gateway" ? "gateway" : "runtime",
       codexAvailable: await this.runner.isAvailable(),
       codexSandboxMode: this.config.codexSandboxMode,
       runtimeProvider: this.config.runtimeProvider,
@@ -281,7 +284,13 @@ export class AgentService {
         storedRun.status = "running";
         storedRun.startedAt = now();
         storedRun.policy = createRunPolicy(run.id, agentAtStart.id, this.config);
-        storedRun.auditEvents.push(auditEvent(storedRun, "policy.created", "Staging-only container policy created"));
+        storedRun.auditEvents.push(auditEvent(
+          storedRun,
+          "policy.created",
+          "Staging-only container policy created with " +
+            storedRun.policy.networkMode +
+            " networking",
+        ));
       }
     });
     try {
@@ -292,7 +301,7 @@ export class AgentService {
       transaction = await this.transactions.prepare(run.id, agentAtStart.workspacePath);
       const codexHomePath = await ensureAgentCodexHome(this.config, agentAtStart.id);
       const activeRun = this.getRun(run.id);
-      await this.store.mutate((database) => { const stored = database.runs.find((item) => item.id === run.id); if (stored) { stored.transaction = transaction; stored.auditEvents.push(auditEvent(stored, "workspace.staged", "Live workspace copied into an isolated transaction"), auditEvent(stored, "runtime.started", "Container Runtime started with staging and private session mounts")); } });
+      await this.store.mutate((database) => { const stored = database.runs.find((item) => item.id === run.id); if (stored) { stored.transaction = transaction; stored.auditEvents.push(auditEvent(stored, "workspace.staged", "Live workspace copied into an isolated transaction"), auditEvent(stored, "runtime.started", "Container Runtime started with staging, private session, and " + stored.policy?.networkMode + " network policy")); } });
       const result = await this.runner.run({
         runId: run.id,
         agentId: agentAtStart.id,

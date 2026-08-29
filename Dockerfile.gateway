@@ -1,0 +1,17 @@
+ARG NODE_IMAGE=node:22-bookworm-slim
+FROM ${NODE_IMAGE}
+
+LABEL org.opencontainers.image.title="Airlock Ark Gateway"
+LABEL org.opencontainers.image.description="Responses-only egress gateway for isolated Agent Runtime containers"
+
+WORKDIR /app
+COPY --chown=node:node apps/server/dist ./dist
+
+ENV ARK_GATEWAY_HOST=0.0.0.0
+ENV ARK_GATEWAY_PORT=8080
+ENV NODE_ENV=production
+
+USER node
+EXPOSE 8080
+
+CMD ["node", "/app/dist/ark-gateway-main.js"]

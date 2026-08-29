@@ -25,8 +25,10 @@ Both profiles require a Volcengine Ark API key and a Responses-capable endpoint.
 >
 > The script installs Docker and Node.js 22, builds the Runtime image, creates
 > an `airlock` service account in the `docker` group, and runs the control plane
-> under systemd on port 3000. `APP_AUTH_TOKEN` must be 24+ characters because the
-> server listens beyond loopback.
+> under systemd on port 3000. It also creates an internal Runtime network and a
+> Responses-only Ark gateway. Runtime containers have no direct internet route
+> and receive signed Run tokens instead of the real Ark key. `APP_AUTH_TOKEN`
+> must be 24+ characters because the server listens beyond loopback.
 
 Recommended host:
 
@@ -117,13 +119,14 @@ PUBLIC_PORT=80
 ARK_API_KEY=your-ark-api-key
 ARK_MODEL=ep-your-endpoint-id
 APP_AUTH_TOKEN=the-random-token-generated-above
+RUNTIME_NETWORK_MODE=ark-gateway
 ```
 
 Deploy:
 
 ```bash
 chmod 600 .env.production
-./scripts/deploy-existing-ecs.sh .env.production
+sudo ./scripts/deploy-host.sh .env.production
 ```
 
 Verify:
@@ -132,8 +135,10 @@ Verify:
 curl http://127.0.0.1/api/health
 export APP_AUTH_TOKEN=your-shared-demo-token
 curl -H "Authorization: Bearer $APP_AUTH_TOKEN" \
-  http://127.0.0.1/api/system
-docker compose --env-file .env.production ps
+  http://127.0.0.1:3000/api/system
+systemctl status airlock.service
+docker inspect airlock-production-ark-gateway
+docker network inspect airlock-production-runtime
 ```
 
 Deploy updates with `git pull --ff-only`, then rerun the deployment script.
@@ -142,13 +147,17 @@ Deploy updates with `git pull --ff-only`, then rerun the deployment script.
 
 - Allow TCP 80 only from the event network.
 - Allow TCP 22 only from administrator IP addresses.
-- Allow outbound HTTPS to Ark and package registries.
+- The host and gateway require outbound HTTPS to Ark. Agent Runtime containers
+  have no public route in `ark-gateway` mode.
+- Use `RUNTIME_NETWORK_MODE=current-bridge` only when Agent tasks must contact
+  npm, GitHub, package mirrors, or other external services; this passes the Ark
+  key to the Runtime and weakens confidentiality.
 - Add HTTPS before using `APP_AUTH_TOKEN` across an untrusted network.
 
 Stop the application without deleting Agent data:
 
 ```bash
-docker compose --env-file .env.production down
+sudo systemctl stop airlock.service
 ```
 
 ## Terraform deployment
@@ -207,6 +216,8 @@ terraform -chdir=deploy/volcengine destroy
 
 - Ark keys configure model access; Volcengine account AK/SK configures
   Terraform. Never pass account AK/SK to an Agent Runtime.
+- In `ark-gateway` mode, the real Ark key exists in the gateway container and
+  deployment environment, not the control-plane or Agent Runtime process.
 - `.env.production`, `terraform.tfvars`, and Terraform state must not be
   committed.
 - The POC stores the Ark key in Terraform user data and state. Production

@@ -16,6 +16,9 @@ const envSchema = z.object({
   CODEX_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(600_000),
   CODEX_MAX_OUTPUT_BYTES: z.coerce.number().int().min(65_536).default(2_097_152),
   RUNTIME_PROVIDER: z.enum(["local-process", "container"]).default("container"),
+  RUNTIME_NETWORK_MODE: z
+    .enum(["current-bridge", "ark-gateway", "none"])
+    .default("current-bridge"),
   CONTAINER_ENGINE: z.string().min(1).default("docker"),
   CONTAINER_RUNTIME_IMAGE: z.string().min(1).default("volc-agent-runtime:local"),
   CONTAINER_CPU_LIMIT: z.coerce.number().positive().default(2),
@@ -44,6 +47,18 @@ const envSchema = z.object({
     .string()
     .url()
     .default("https://ark.cn-beijing.volces.com/api/v3"),
+  ARK_GATEWAY_URL: z.string().url().default("http://ark-gateway:8080/api/v3"),
+  ARK_GATEWAY_SECRET: z.string().optional(),
+  ARK_GATEWAY_NETWORK: z
+    .string()
+    .trim()
+    .regex(/^[a-zA-Z0-9_.-]+$/)
+    .optional(),
+  ARK_GATEWAY_CONTAINER: z
+    .string()
+    .trim()
+    .regex(/^[a-zA-Z0-9_.-]+$/)
+    .optional(),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
 
@@ -52,11 +67,34 @@ export type AppConfig = ReturnType<typeof loadConfig>;
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
   const env = envSchema.parse(environment);
   const authToken = env.APP_AUTH_TOKEN?.trim() ?? "";
+  const gatewaySecret = env.ARK_GATEWAY_SECRET?.trim() ?? "";
+  const gatewayUrl = new URL(env.ARK_GATEWAY_URL);
   const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
   if (env.NODE_ENV === "production" && !loopbackHosts.has(env.HOST)) {
     if (authToken.length < 24 || authToken.startsWith("replace-")) {
       throw new Error(
         "APP_AUTH_TOKEN must contain at least 24 characters for a non-loopback production server",
+      );
+    }
+  }
+  if (env.RUNTIME_NETWORK_MODE === "ark-gateway") {
+    if (gatewaySecret.length < 32) {
+      throw new Error(
+        "ARK_GATEWAY_SECRET must contain at least 32 characters in ark-gateway mode",
+      );
+    }
+    if (
+      gatewayUrl.protocol !== "http:" ||
+      gatewayUrl.hostname !== "ark-gateway" ||
+      gatewayUrl.port !== "8080" ||
+      gatewayUrl.pathname.replace(/\/+$/, "") !== "/api/v3" ||
+      gatewayUrl.username ||
+      gatewayUrl.password ||
+      gatewayUrl.search ||
+      gatewayUrl.hash
+    ) {
+      throw new Error(
+        "ARK_GATEWAY_URL must target http://ark-gateway on the internal Runtime network",
       );
     }
   }
@@ -76,6 +114,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     codexTimeoutMs: env.CODEX_TIMEOUT_MS,
     codexMaxOutputBytes: env.CODEX_MAX_OUTPUT_BYTES,
     runtimeProvider: env.RUNTIME_PROVIDER,
+    runtimeNetworkMode: env.RUNTIME_NETWORK_MODE,
     containerEngine: env.CONTAINER_ENGINE,
     containerRuntimeImage: env.CONTAINER_RUNTIME_IMAGE,
     containerCpuLimit: env.CONTAINER_CPU_LIMIT,
@@ -87,17 +126,27 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     arkApiKey: env.ARK_API_KEY?.trim() ?? "",
     arkModel: env.ARK_MODEL?.trim() ?? "",
     arkBaseUrl: env.ARK_BASE_URL.replace(/\/+$/, ""),
+    arkGatewayUrl: env.ARK_GATEWAY_URL.replace(/\/+$/, ""),
+    arkGatewaySecret: gatewaySecret,
+    arkGatewayNetwork:
+      env.ARK_GATEWAY_NETWORK?.trim() ||
+      "airlock-" + env.RUNTIME_INSTANCE_ID + "-runtime",
+    arkGatewayContainer:
+      env.ARK_GATEWAY_CONTAINER?.trim() ||
+      "airlock-" + env.RUNTIME_INSTANCE_ID + "-ark-gateway",
     nodeEnv: env.NODE_ENV,
   };
 }
 
 export function isArkConfigured(config: AppConfig): boolean {
-  return (
-    config.arkApiKey.length > 0 &&
-    !config.arkApiKey.startsWith("replace-") &&
-    config.arkModel.length > 0 &&
-    !config.arkModel.includes("replace-")
-  );
+  const modelConfigured =
+    config.arkModel.length > 0 && !config.arkModel.includes("replace-");
+  const routeConfigured =
+    config.runtimeNetworkMode === "ark-gateway"
+      ? config.arkGatewaySecret.length >= 32
+      : config.arkApiKey.length > 0 &&
+        !config.arkApiKey.startsWith("replace-");
+  return modelConfigured && routeConfigured;
 }
 
 export async function writeCodexConfig(config: AppConfig): Promise<void> {
@@ -109,7 +158,12 @@ export async function writeCodexConfig(config: AppConfig): Promise<void> {
     "",
     "[model_providers.volcengine_ark]",
     'name = "Volcengine Ark"',
-    "base_url = " + JSON.stringify(config.arkBaseUrl),
+    "base_url = " +
+      JSON.stringify(
+        config.runtimeNetworkMode === "ark-gateway"
+          ? config.arkGatewayUrl
+          : config.arkBaseUrl,
+      ),
     'env_key = "ARK_API_KEY"',
     'wire_api = "responses"',
     "requires_openai_auth = false",

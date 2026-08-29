@@ -445,6 +445,7 @@ export default function App() {
           <span>
             {system?.arkModel ?? "Ark model not configured"}
             {system?.containerEngine ? " · " + system.containerEngine : ""}
+            {system?.runtimeNetworkMode ? " · " + system.runtimeNetworkMode : ""}
           </span>
         </div>
       </aside>
@@ -629,7 +630,7 @@ export default function App() {
                     </Surface>
                     <Surface id={2} active={activeContribution} onHover={setActiveContribution}>
                       <div className="policy-facts">
-                        <span>Container Runtime</span><span>Staging-only workspace</span><span>Private Agent session</span><span>{evidence.policy?.networkMode ?? "policy unavailable"}</span>
+                        <span>Container Runtime</span><span>Staging-only workspace</span><span>Private Agent session</span><span>{evidence.policy?.networkMode === "ark-gateway" ? "Ark-only egress" : evidence.policy?.networkMode === "current-bridge" ? "Connected internet" : evidence.policy?.networkMode === "none" ? "No network" : "Policy unavailable"}</span>
                       </div>
                     </Surface>
                     {evidence.run.status === "awaiting_review" && (

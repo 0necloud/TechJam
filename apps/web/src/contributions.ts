@@ -32,9 +32,9 @@ export const contributions: Contribution[] = [
   },
   {
     id: 2,
-    title: "Capability-scoped Run policy",
+    title: "Capability-scoped Run and egress policy",
     blurb:
-      "Each Run gets an expiring policy naming its runtime, workspace scope, session scope, and network mode. The Runner refuses to launch if any field is wrong.",
+      "Each Run gets an expiring policy naming its runtime, workspace, session, and network scope. In gateway mode the Runtime receives a signed Run token—not the Ark key—and can reach only the Responses gateway on an internal network.",
     file: "apps/server/src/run-policy.ts",
     lines: 33,
     isNewFile: true,

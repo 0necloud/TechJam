@@ -19,4 +19,7 @@ describe("Run policy validation", () => {
     expect(() => validateRunPolicy(request({ expiresAt: new Date(0).toISOString() }), config)).toThrow("expired");
     expect(() => validateRunPolicy(request({ revokedAt: new Date().toISOString() }), config)).toThrow("revoked");
   });
+  it("rejects a policy whose network boundary differs from configuration", () => {
+    expect(() => validateRunPolicy(request({ networkMode: "ark-gateway" }), config)).toThrow("network mode");
+  });
 });

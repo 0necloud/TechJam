@@ -1,6 +1,10 @@
 .git
-node_modules
+**/node_modules
 **/dist
+# Dockerfile.gateway packages the already typechecked server output. The local
+# and host startup scripts run npm build before building that image.
+!apps/server/dist/
+!apps/server/dist/**
 .data
 .local
 data
