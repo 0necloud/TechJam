@@ -8,9 +8,9 @@
   --muted: #777870;
   --line: #deddd6;
   --paper: #fbfaf7;
-  --purple: #6954d9;
-  --purple-dark: #513db9;
-  --purple-soft: #efecff;
+  --accent: #006FCF;
+  --accent-dark: #00509E;
+  --accent-soft: #E8EFF8;
   --green: #33906d;
   --red: #c55353;
   --shadow: 0 24px 60px rgba(39, 38, 33, 0.12);
@@ -159,13 +159,13 @@ button {
 
 .button-primary {
   color: white;
-  background: var(--purple);
+  background: var(--accent);
   box-shadow: 0 7px 18px rgba(86, 64, 194, 0.22);
 }
 
 .button-primary:hover:not(:disabled) {
   transform: translateY(-1px);
-  background: var(--purple-dark);
+  background: var(--accent-dark);
 }
 
 .button-ghost {
@@ -761,7 +761,7 @@ textarea:focus {
 
 .prompt-grid span {
   display: block;
-  color: var(--purple);
+  color: var(--accent);
   margin-bottom: 8px;
 }
 
@@ -883,7 +883,7 @@ textarea:focus {
   border-radius: 10px;
   border: 0;
   color: white;
-  background: var(--purple);
+  background: var(--accent);
   font-size: 18px;
   cursor: pointer;
 }
@@ -1580,7 +1580,7 @@ textarea:focus {
   letter-spacing: 0.03em;
 }
 
-.source-agent { color: var(--purple-dark); border-color: #d5cdf5; background: var(--purple-soft); }
+.source-agent { color: var(--accent-dark); border-color: #d5cdf5; background: var(--accent-soft); }
 
 .withheld-reason { margin: 7px 0 9px; color: #5f5c69; font-size: 11px; }
 
@@ -1593,7 +1593,7 @@ textarea:focus {
   overflow: hidden;
 }
 
-.read-meter span { display: block; height: 100%; border-radius: 999px; background: var(--purple); }
+.read-meter span { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
 
 .withheld-meter-label { margin: 6px 0 0; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 
@@ -1704,7 +1704,7 @@ textarea:focus {
 
 .control { display: grid; gap: 4px; font-size: 11px; color: var(--muted); }
 .control > span { font-weight: 650; color: var(--ink); }
-.control em { font-style: normal; font-weight: 600; color: var(--purple-dark); }
+.control em { font-style: normal; font-weight: 600; color: var(--accent-dark); }
 .control select {
   width: 100%;
   padding: 6px 7px;
@@ -1716,7 +1716,7 @@ textarea:focus {
   font-size: 11px;
 }
 .control select:disabled { opacity: 0.55; cursor: not-allowed; }
-.control select:focus-visible { outline: 2px solid var(--purple); outline-offset: 1px; }
+.control select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .control small { color: var(--muted); font-size: 10px; line-height: 1.4; }
 
 .gate-warning {
@@ -1755,12 +1755,12 @@ textarea:focus {
   cursor: pointer;
   white-space: nowrap;
 }
-.button-quiet:hover { border-color: var(--purple); color: var(--purple-dark); }
+.button-quiet:hover { border-color: var(--accent); color: var(--accent-dark); }
 
 .tape-list { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
 
 .tape { padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; background: white; opacity: 0.55; transition: opacity 160ms ease, border-color 160ms ease; }
-.tape-active { opacity: 1; border-color: var(--purple); }
+.tape-active { opacity: 1; border-color: var(--accent); }
 .tape-halted { opacity: 1; }
 
 .tape-head { display: flex; align-items: center; gap: 7px; }
@@ -1768,7 +1768,7 @@ textarea:focus {
 .tape-head .level { margin-left: auto; }
 
 .tape-track { position: relative; height: 6px; margin: 8px 0 6px; border-radius: 999px; background: #ece9f7; overflow: visible; }
-.tape-fill { display: block; height: 100%; border-radius: 999px; background: var(--purple); width: 0; transition: width 600ms cubic-bezier(0.22, 0.8, 0.3, 1); }
+.tape-fill { display: block; height: 100%; border-radius: 999px; background: var(--accent); width: 0; transition: width 600ms cubic-bezier(0.22, 0.8, 0.3, 1); }
 .tape-stop { position: absolute; top: -4px; width: 2px; height: 14px; border-radius: 1px; background: var(--red); transform: translateX(-1px); }
 
 .tape-label { display: flex; align-items: baseline; gap: 10px; margin: 0; font-size: 10px; color: var(--muted); }
@@ -1780,36 +1780,46 @@ textarea:focus {
   .tape-fill { transition: none; }
 }
 
-/* --- Run pipeline ---------------------------------------------------------- */
-/* The middleware flow for one Run, read left to right. State is carried by the
-   node, not by colour alone: diverted nodes are ringed, blocked nodes are
-   crossed, so the row survives a greyscale print and a colour-blind reader. */
+
+/* --- Run pipeline: an interactive graph ------------------------------------ */
+/* Each stage is a button that opens what that stage decided and routes to the
+   panel holding its evidence. State is carried by node shape as well as colour,
+   so the row still reads in greyscale and for colour-blind reviewers.
+   Entry, hover and expand motion are owned by Motion, not CSS keyframes. */
+
+.pipeline-wrap { margin: 16px 0 4px; }
 
 .pipeline {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
-  gap: 0;
-  margin: 18px 0 4px;
-  padding: 16px 4px 4px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
   overflow-x: auto;
   scrollbar-width: thin;
 }
 
-.pipeline-stage {
-  position: relative;
+.pipeline-stage { position: relative; display: grid; justify-items: center; min-width: 108px; }
+
+.pipe-hit {
   display: grid;
-  gap: 8px;
   justify-items: center;
-  min-width: 104px;
-  padding: 0 6px;
-  animation: pipe-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: center;
 }
 
-@keyframes pipe-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
-}
+.pipe-hit:hover { background: var(--accent-soft); }
+.pipe-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pipe-open { background: var(--accent-soft); border-color: #c3d8ee; }
 
 .pipe-node {
   position: relative;
@@ -1827,41 +1837,99 @@ textarea:focus {
 
 .node-passed { border-color: var(--green); }
 .node-passed .pipe-dot { background: var(--green); }
-
 .node-diverted { border-color: #b07d2b; box-shadow: 0 0 0 3px rgba(176, 125, 43, 0.16); }
 .node-diverted .pipe-dot { background: #b07d2b; }
-
 .node-blocked { border-color: var(--red); }
 .node-blocked .pipe-dot { width: 9px; height: 2px; border-radius: 0; background: var(--red); }
-
 .node-pending { opacity: 0.55; }
 
 /* The connector belongs to the stage it leaves, so its colour reports whether
    the Run actually got through that stage. */
 .pipe-link {
   position: absolute;
-  top: 10px;
+  top: 19px;
   left: 50%;
   width: 100%;
   height: 1.5px;
   background: var(--line);
+  pointer-events: none;
 }
 .link-passed { background: var(--green); }
 .link-diverted { background: linear-gradient(90deg, #b07d2b, var(--line)); }
 .link-blocked { background: repeating-linear-gradient(90deg, var(--red) 0 4px, transparent 4px 8px); }
 
-.pipe-text { display: grid; gap: 2px; justify-items: center; text-align: center; }
+.pipe-text { display: grid; gap: 2px; }
 .pipe-label { font-size: 11px; font-weight: 650; letter-spacing: -0.005em; }
 .pipe-detail { font-size: 10px; color: var(--muted); line-height: 1.35; }
-.node-pending ~ .pipe-text .pipe-label { color: var(--muted); font-weight: 500; }
+
+.pipe-detail-card { overflow: hidden; }
+.pipe-detail-inner {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid #c3d8ee;
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+.pipe-detail-head { display: flex; align-items: center; gap: 9px; }
+.pipe-detail-inner p { margin: 0; font-size: 12.5px; color: #3f4a58; }
+.pipe-detail-fact { font-weight: 600; color: var(--ink); }
+
+/* --- Collapsible evidence -------------------------------------------------- */
+
+.evidence-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.evidence-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.evidence-heading { align-items: flex-start; flex-wrap: wrap; }
+
+.chev {
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--accent);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.chev-open { transform: rotate(90deg); }
+
+.evidence-collapsed .evidence-heading { margin-bottom: 0; }
+
+/* Brief highlight when a pipeline stage routes the reader to a panel. */
+.surface-flash { animation: surface-flash 1.1s ease-out; border-radius: 10px; }
+@keyframes surface-flash {
+  0% { box-shadow: 0 0 0 0 rgba(0, 111, 207, 0.42); }
+  100% { box-shadow: 0 0 0 14px rgba(0, 111, 207, 0); }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .pipeline-stage { animation: none; }
+  .chev, .surface-flash { transition: none; animation: none; }
 }
 
 @media (max-width: 720px) {
-  .pipeline { grid-auto-flow: row; grid-auto-columns: auto; gap: 14px; }
-  .pipeline-stage { grid-template-columns: 22px 1fr; justify-items: start; min-width: 0; }
-  .pipe-text { justify-items: start; text-align: left; }
-  .pipe-link { top: 22px; left: 10px; width: 1.5px; height: 14px; }
+  .pipeline { grid-auto-flow: row; grid-auto-columns: auto; }
+  .pipeline-stage { min-width: 0; }
+  .pipe-hit { grid-template-columns: 22px 1fr; justify-items: start; text-align: left; gap: 10px; }
+  .pipe-text { justify-items: start; }
+  .pipe-link { top: 30px; left: 17px; width: 1.5px; height: 12px; }
 }
+
+
+/* The body mounts and unmounts, so the collapse is exact; only the entrance
+   is animated. Motion drives the pipeline, where it works reliably. */
+.evidence-body { animation: evidence-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes evidence-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .evidence-body { animation: none; } }

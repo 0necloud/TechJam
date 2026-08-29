@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { api, ApiError, setAuthToken } from "./api";
 import { contributions, contributionSummary } from "./contributions";
 import type { Agent, AgentRun, Capability, IngressDecision, IngressSettings, IngressSettingsView, Message, ObservedFile, PromptScreen, RunEvidence, StopReason, SystemInfo, TrifectaDecision } from "./types";
@@ -141,6 +142,8 @@ interface Stage {
   label: string;
   detail: string;
   state: StageState;
+  /** Numbered evidence surface this stage routes to when clicked. */
+  surface: number;
 }
 
 /**
@@ -163,33 +166,95 @@ function pipelineStages(evidence: RunEvidence): Stage[] {
     evidence.decision?.decision === "approve" ? "passed" : evidence.decision?.decision === "reject" ? "blocked" : evidence.run.status === "awaiting_review" ? "diverted" : types.has("run.completed") ? "passed" : "pending";
 
   return [
-    { key: "prompt", label: "Prompt screen", detail: evidence.promptScreen?.outcome === "sanitized" ? "credential stripped" : evidence.promptScreen?.requestsSensitiveAccess ? "flagged sensitive intent" : "clean", state: promptState },
-    { key: "stage", label: "Stage copy", detail: "live workspace untouched", state: seen("workspace.staged") },
-    { key: "classify", label: "Classify", detail: ingress ? ingress.scannedFiles + " files · " + formatBytes(ingress.bytesSkipped) + " never read" : "—", state: seen("ingress.scanned") },
-    { key: "trifecta", label: "Trifecta", detail: ingress?.trifecta ? ingress.trifecta.present.length + " of 3 held" : "—", state: trifectaState },
-    { key: "withhold", label: "Withhold", detail: ingress ? (ingress.withheld.length ? ingress.withheld.length + " withheld" : "nothing above clearance") : "—", state: withholdState },
-    { key: "runtime", label: "Runtime", detail: evidence.policy?.networkMode ?? "container", state: seen("runtime.completed") },
-    { key: "policy", label: "Change policy", detail: decision ? decision.rules.map((rule) => rule.id).join(" ") : "no changes", state: policyState },
-    { key: "review", label: "Promotion", detail: evidence.decision?.decision ?? (evidence.run.status === "awaiting_review" ? "awaiting you" : "nothing to promote"), state: reviewState },
+    { key: "prompt", label: "Prompt screen", detail: evidence.promptScreen?.outcome === "sanitized" ? "credential stripped" : evidence.promptScreen?.requestsSensitiveAccess ? "flagged sensitive intent" : "clean", state: promptState , surface: 8 },
+    { key: "stage", label: "Stage copy", detail: "live workspace untouched", state: seen("workspace.staged") , surface: 1 },
+    { key: "classify", label: "Classify", detail: ingress ? ingress.scannedFiles + " files · " + formatBytes(ingress.bytesSkipped) + " never read" : "—", state: seen("ingress.scanned") , surface: 8 },
+    { key: "trifecta", label: "Trifecta", detail: ingress?.trifecta ? ingress.trifecta.present.length + " of 3 held" : "—", state: trifectaState , surface: 9 },
+    { key: "withhold", label: "Withhold", detail: ingress ? (ingress.withheld.length ? ingress.withheld.length + " withheld" : "nothing above clearance") : "—", state: withholdState , surface: 8 },
+    { key: "runtime", label: "Runtime", detail: evidence.policy?.networkMode ?? "container", state: seen("runtime.completed") , surface: 2 },
+    { key: "policy", label: "Change policy", detail: decision ? decision.rules.map((rule) => rule.id).join(" ") : "no changes", state: policyState , surface: 5 },
+    { key: "review", label: "Promotion", detail: evidence.decision?.decision ?? (evidence.run.status === "awaiting_review" ? "awaiting you" : "nothing to promote"), state: reviewState , surface: 7 },
   ];
 }
 
+const STATE_MEANING: Record<StageState, string> = {
+  passed: "Completed without intervention.",
+  diverted: "The gate acted here and changed what happened next.",
+  blocked: "The Run stopped here.",
+  pending: "Never reached.",
+};
+
+/**
+ * The pipeline, as a graph you can interrogate. Clicking a stage opens what
+ * that stage decided and offers a jump to the panel holding its evidence, so
+ * the row is a route into the detail rather than a decorative summary.
+ */
 function RunPipeline({ evidence }: { evidence: RunEvidence }) {
   const stages = pipelineStages(evidence);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const open = stages.find((stage) => stage.key === openKey) ?? null;
+
+  const jump = (surface: number) => {
+    const target = document.getElementById("airlock-surface-" + surface);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.classList.add("surface-flash");
+    window.setTimeout(() => target.classList.remove("surface-flash"), 1200);
+  };
+
   return (
-    <div className="pipeline" role="list" aria-label="Middleware stages for this Run">
-      {stages.map((stage, index) => (
-        <div className="pipeline-stage" role="listitem" key={stage.key} style={{ animationDelay: index * 55 + "ms" }}>
-          <div className={"pipe-node node-" + stage.state}>
-            <span className="pipe-dot" aria-hidden="true" />
-          </div>
-          <div className="pipe-text">
-            <span className="pipe-label">{stage.label}</span>
-            <span className="pipe-detail">{stage.detail}</span>
-          </div>
-          {index < stages.length - 1 && <span className={"pipe-link link-" + stage.state} aria-hidden="true" />}
-        </div>
-      ))}
+    <div className="pipeline-wrap">
+      <ol className="pipeline" aria-label="Middleware stages for this Run">
+        {stages.map((stage, index) => (
+          <li className="pipeline-stage" key={stage.key}>
+            <motion.button
+              type="button"
+              className={"pipe-hit" + (openKey === stage.key ? " pipe-open" : "")}
+              onClick={() => setOpenKey(openKey === stage.key ? null : stage.key)}
+              aria-expanded={openKey === stage.key}
+              aria-label={stage.label + ": " + stage.detail}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.045, type: "spring", stiffness: 420, damping: 32 }}
+              whileHover={{ y: -2 }}
+              whileTap={{ scale: 0.97 }}
+            >
+              <span className={"pipe-node node-" + stage.state}>
+                <span className="pipe-dot" aria-hidden="true" />
+              </span>
+              <span className="pipe-text">
+                <span className="pipe-label">{stage.label}</span>
+                <span className="pipe-detail">{stage.detail}</span>
+              </span>
+            </motion.button>
+            {index < stages.length - 1 && <span className={"pipe-link link-" + stage.state} aria-hidden="true" />}
+          </li>
+        ))}
+      </ol>
+
+      <AnimatePresence initial={false} mode="wait">
+        {open && (
+          <motion.div
+            key={open.key}
+            className="pipe-detail-card"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ type: "spring", stiffness: 380, damping: 34, opacity: { duration: 0.14 } }}
+          >
+            <div className="pipe-detail-inner">
+              <div className="pipe-detail-head">
+                <strong>{open.label}</strong>
+                <span className={"tag tag-" + (open.state === "blocked" ? "denied" : open.state === "diverted" ? "held" : "clear")}>{open.state}</span>
+              </div>
+              <p>{STATE_MEANING[open.state]} {open.detail !== "—" && <span className="pipe-detail-fact">{open.detail}</span>}</p>
+              <button type="button" className="button button-quiet" onClick={() => jump(open.surface)}>
+                Show the evidence →
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -470,6 +535,7 @@ export default function App() {
   const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
   const [evidence, setEvidence] = useState<RunEvidence | null>(null);
   const [reveal, setReveal] = useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(true);
   const [activeContribution, setActiveContribution] = useState<number | null>(null);
   // Which numbered surfaces the Playground is currently rendering. The index
   // marks the rest as "not on screen" instead of pointing at nothing.
@@ -571,9 +637,14 @@ export default function App() {
     }
   }, [selected]);
 
+  // Scroll only when the transcript actually grows. The Run poller replaces
+  // activeRun with a fresh object every 900ms, and depending on that identity
+  // re-fired a smooth scroll twice a second, which read as the page bobbing.
+  const messageCount = messages.length;
+  const runIsActive = activeRun != null && ["queued", "running"].includes(activeRun.status);
   useEffect(() => {
-    messageEnd.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, activeRun]);
+    messageEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messageCount, runIsActive]);
 
   const changeIngressSettings = async (patch: IngressSettings) => {
     setSettingsBusy(true);
@@ -664,7 +735,15 @@ export default function App() {
         await new Promise((resolve) => window.setTimeout(resolve, 900));
         if (!mountedRef.current) return;
         const result = await api.run(runId);
-        if (selectedIdRef.current === agentId) setActiveRun(result.run);
+        // Swap state only on a real change. An identical poll result would
+        // otherwise re-render the whole evidence panel every 900ms.
+        if (selectedIdRef.current === agentId) {
+          setActiveRun((current) =>
+            current && current.id === result.run.id && current.status === result.run.status && current.output === result.run.output
+              ? current
+              : result.run,
+          );
+        }
         if (!["queued", "running"].includes(result.run.status)) {
           const details = await api.evidence(runId);
           if (selectedIdRef.current === agentId) setEvidence(details.evidence);
@@ -1033,14 +1112,30 @@ export default function App() {
                   </article>
                 )}
                 {evidence && (
-                  <section className="evidence-panel" aria-label="Run evidence">
+                  <section className={"evidence-panel" + (evidenceOpen ? "" : " evidence-collapsed")} aria-label="Run evidence">
                     <Surface id={1} active={activeContribution} onHover={setActiveContribution}>
                       <div className="evidence-heading">
-                        <div><span className="eyebrow">Airlock evidence</span><h3>{evidence.run.status === "awaiting_review" ? "Changes quarantined for review" : "Run outcome: " + evidence.run.status}</h3></div>
+                        <button
+                          type="button"
+                          className="evidence-toggle"
+                          onClick={() => setEvidenceOpen((open) => !open)}
+                          aria-expanded={evidenceOpen}
+                          aria-controls="evidence-body"
+                        >
+                          <span className={"chev" + (evidenceOpen ? " chev-open" : "")} aria-hidden="true" />
+                          <span className="eyebrow">Airlock evidence</span>
+                        </button>
+                        <div><h3>{evidence.run.status === "awaiting_review" ? "Changes quarantined for review" : "Run outcome: " + evidence.run.status}</h3></div>
                         <span className={"risk risk-" + (evidence.policyDecision?.risk ?? "low")}>{evidence.policyDecision?.risk ?? "no-change"} risk</span>
                       </div>
                       <RunPipeline evidence={evidence} />
                     </Surface>
+                    {/* Collapsed with a CSS grid-rows transition rather than Motion.
+                        Motion drives the pipeline fine, but would not apply an animated
+                        height to this element — aria-expanded flipped while the inline
+                        style stayed at height:auto — so the reliable primitive wins here. */}
+                    {evidenceOpen && (
+                      <div id="evidence-body" className="evidence-body">
                     <Surface id={2} active={activeContribution} onHover={setActiveContribution}>
                       <div className="policy-facts">
                         <span>Container Runtime</span><span>Staging-only workspace</span><span>Private Agent session</span><span>{evidence.policy?.networkMode === "ark-gateway" ? "Ark-only egress" : evidence.policy?.networkMode === "current-bridge" ? "Connected internet" : evidence.policy?.networkMode === "none" ? "No network" : "Policy unavailable"}</span>
@@ -1074,6 +1169,8 @@ export default function App() {
                       <Surface id={7} active={activeContribution} onHover={setActiveContribution}>
                         <div className="decision-actions"><button className="button button-danger" disabled={busy} onClick={() => void decideRun("reject")}>Reject changes</button><button className="button button-primary" disabled={busy || !evidence.liveWorkspaceUnchanged} onClick={() => void decideRun("approve")}>Approve and promote</button></div>
                       </Surface>
+                    )}
+                      </div>
                     )}
                   </section>
                 )}
