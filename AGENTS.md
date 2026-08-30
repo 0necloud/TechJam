@@ -22,6 +22,17 @@ workstream document is less specific.
 - Full Runtime development and acceptance should use WSL2/Linux. Kali WSL2 is
   acceptable when Node.js 22+, npm 10+, and Docker are working.
 
+## Design planning
+
+Before proposing or changing a security control, read
+`docs/DESIGN_FOUNDATIONS.md` and follow its planning checklist. Ground the
+design in the published literature — Denning on information-flow lattices,
+Myers and Liskov (MIT) on declassification, Greshake et al. on indirect prompt
+injection, Debenedetti et al. on defence by construction — and state which
+result the control restates. Every proposal states how it fails before it
+states what it protects, and no proposal may claim a guarantee the
+front-loaded architecture cannot deliver.
+
 ## Working agreement
 
 - Default to one sequential implementation owner. Do not delegate or split work
