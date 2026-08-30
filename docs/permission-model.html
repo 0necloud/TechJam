@@ -900,6 +900,92 @@ Reason:         Environment file</div>
 
   <section>
     <div class="prose">
+      <h2>What this restates</h2>
+      <p>
+        None of these controls are new. Each is an existing result from the security
+        literature applied to an autonomous coding agent, and naming the source is what makes
+        the limits legible: a restatement inherits its original's weaknesses, plus whatever it
+        gave up in the translation.
+      </p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Control</th><th>Grounded in</th><th>Where Airlock is weaker</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Clearance lattice</strong></td>
+            <td>Denning, <em>A Lattice Model of Secure Information Flow</em>, CACM 19(5), 1976</td>
+            <td>Denning governs flows <em>through computation</em>. Airlock classifies at rest and enforces once, so content is unlabelled after it enters the container. A total order also cannot express incomparable compartments.</td>
+          </tr>
+          <tr>
+            <td><strong>Declassification log</strong></td>
+            <td>Myers &amp; Liskov, <em>A Decentralized Model for Information Flow Control</em>, SOSP 1997 (MIT LCS)</td>
+            <td>DLM's authority is per-principal, so no single actor can declassify everything. Airlock is single-operator: one person can lower every control at once, with no delegation or separation of duty.</td>
+          </tr>
+          <tr>
+            <td><strong>Threat model</strong></td>
+            <td>Greshake et al., <em>Not What You've Signed Up For</em>, AISec 2023</td>
+            <td>Nothing — this is the attack, reproduced rather than paraphrased. But <span class="rule">IN052</span> is telemetry, not defence: it loses to rewording.</td>
+          </tr>
+          <tr>
+            <td><strong>Defence by construction</strong></td>
+            <td>Debenedetti et al., <em>Defeating Prompt Injections by Design</em> (CaMeL), 2025</td>
+            <td>CaMeL tracks provenance per value through a custom interpreter and enforces at each tool call. Airlock is per-Run and front-loaded, with no flow tracking and no provable guarantee.</td>
+          </tr>
+          <tr>
+            <td><strong>Capability removal</strong></td>
+            <td>Willison, <em>the lethal trifecta</em> — industry writing, not peer-reviewed</td>
+            <td>All three legs are detected heuristically. The check is only as good as the weakest of the three.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="split">
+      <div class="card">
+        <h4>Why declassification is logged</h4>
+        <p>
+          The MIT decentralized label model exists because pure lattice models leave one thing
+          open: real systems must sometimes release data downward, and a model with no
+          legitimate downgrade path gets bypassed in practice. DLM makes the downgrade a
+          first-class, <em>attributable</em> act.
+        </p>
+        <p>
+          That is the whole argument for the settings log. Raising a Run's clearance is a
+          declassification, so it is recorded with its before and after value and flagged when
+          it reduces protection. The control can be relaxed; it cannot be relaxed invisibly.
+        </p>
+      </div>
+      <div class="card">
+        <h4>Why detection is not the control</h4>
+        <p>
+          A filter matching <em>"ignore all previous instructions"</em> loses to paraphrase.
+          <span class="rule">IN052</span> exists only to establish that untrusted content is in
+          scope, which feeds the capability check.
+        </p>
+        <p>
+          If it misses an injection entirely, the vendored file still carries
+          <span class="rule">IN050</span> from its path, and the withholding still happens —
+          because it was never keyed on recognising the attack in the first place.
+        </p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <p>
+        <strong>The planning rule this sets.</strong> Every control in this repository states
+        how it fails before it states what it protects, and no claim may exceed what a
+        front-loaded architecture can deliver. A proposal that cannot articulate its own
+        failure mode is not ready.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="prose">
       <h2>What this does not do</h2>
       <p>
         Stating the limits is part of the design, not an apology for it.
