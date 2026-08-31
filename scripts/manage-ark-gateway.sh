@@ -59,7 +59,7 @@ log "Starting the Responses-only gateway."
 "$engine" run --detach \
   --name "$container_name" \
   --network bridge \
-  "${restart_args[@]}" \
+  ${restart_args[@]+"${restart_args[@]}"} \
   --label io.codejam.airlock=ark-gateway \
   --read-only \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=16m \
