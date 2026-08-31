@@ -90,7 +90,24 @@ export function classifyName(relativePath: string): SensitivitySignal[] {
 
 // --- Content rules ----------------------------------------------------------
 
-interface MarkerRule { pattern: RegExp; level: SensitivityLevel; detail: string }
+interface MarkerRule { pattern: RegExp; level: SensitivityLevel; detail: string; minEntropy?: number }
+
+// Shannon entropy in bits per character. Generated credentials are random by
+// construction and score high; prose, identifiers, and placeholders repeat
+// characters in predictable ways and score low. Used only to judge a value that
+// a pattern has already identified as a credential assignment — measured over a
+// whole line it would flag ordinary source code.
+function shannonEntropy(value: string): number {
+  if (!value) return 0;
+  const frequency = new Map<string, number>();
+  for (const character of value) frequency.set(character, (frequency.get(character) ?? 0) + 1);
+  let bits = 0;
+  for (const count of frequency.values()) {
+    const probability = count / value.length;
+    bits -= probability * Math.log2(probability);
+  }
+  return bits;
+}
 
 // Classification markings. Matched per line so a marking banner is distinguished
 // from the same word appearing mid-sentence inside source code.
@@ -115,6 +132,23 @@ const SECRET_MARKERS: MarkerRule[] = [
   { pattern: /\bBearer\s+[A-Za-z0-9._~+/-]{20,}/, level: "restricted", detail: "Bearer token" },
   { pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/, level: "confidential", detail: "JSON Web Token" },
   { pattern: /\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd)\b\s*[:=]\s*["']?[A-Za-z0-9_\-/.+=]{8,}/i, level: "restricted", detail: "Credential assignment" },
+  // Vendor formats below are taken from the gitleaks rule set (MIT licensed),
+  // translated for JavaScript: inline (?i) becomes the i flag and literal dots
+  // are escaped. Reusing a maintained corpus beats inventing patterns here.
+  { pattern: /\b((?:sk|rk)_(?:test|live|prod)_[a-zA-Z0-9]{10,99})(?:[\x60'"\s;]|\\[nr]|$)/, level: "restricted", detail: "Stripe API key" },
+  { pattern: /\b(AIza[\w-]{35})(?:[\x60'"\s;]|\\[nr]|$)/, level: "restricted", detail: "Google API key" },
+  { pattern: /\b(npm_[a-z0-9]{36})(?:[\x60'"\s;]|\\[nr]|$)/i, level: "restricted", detail: "npm access token" },
+  { pattern: /(?:https?:\/\/)?hooks\.slack\.com\/(?:services|workflows|triggers)\/[A-Za-z0-9+\/]{43,56}/, level: "restricted", detail: "Slack webhook URL" },
+  // Not a gitleaks rule: a connection string carries its password inline, and the
+  // credential is the part between the first colon and the @.
+  { pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@\/]+:([^\s:@\/]{6,})@[^\s\/]+/i, level: "restricted", detail: "Connection string with inline password" },
+
+  // The rules above only catch formats somebody remembered to add. This is the
+  // general case: any identifier that names a credential, assigned a value
+  // random enough to be one. The entropy gate is what separates a real secret
+  // from `api_key = "your_api_key_here"`, and the capture group exists so the
+  // gate measures the value rather than the whole line.
+  { pattern: /\b[A-Za-z0-9_-]*(?:key|secret|token|passwd|password|pass|credential)[A-Za-z0-9_-]*\s*[:=]\s*["']?([A-Za-z0-9_\-/.+=]{16,})/i, level: "restricted", detail: "High-entropy credential assignment", minEntropy: 3.5 },
 ];
 
 const PII_MARKERS: MarkerRule[] = [
@@ -171,7 +205,9 @@ export function classifyText(text: string, origin: SignalOrigin): SensitivitySig
     }
     for (const marker of SECRET_MARKERS) {
       const match = marker.pattern.exec(line);
-      if (match) push("IN022", marker, maskedExcerpt(match[0], marker.detail));
+      if (!match) continue;
+      if (marker.minEntropy !== undefined && shannonEntropy(match[1] ?? "") < marker.minEntropy) continue;
+      push("IN022", marker, maskedExcerpt(match[0], marker.detail));
     }
     for (const marker of PII_MARKERS) {
       const match = marker.pattern.exec(line);
@@ -238,7 +274,7 @@ export function redactSecrets(text: string): string {
   for (const marker of SECRET_MARKERS) {
     const flags = marker.pattern.flags.includes("i") ? "gi" : "g";
     safe = safe.replace(new RegExp(marker.pattern.source, flags), (match) => {
-      if (marker.detail !== "Credential assignment") return "[REDACTED]";
+      if (marker.detail !== "Credential assignment" && marker.minEntropy === undefined) return "[REDACTED]";
       const assignment = /^(.*?[:=]\s*["']?)/.exec(match);
       return assignment ? assignment[1] + "[REDACTED]" : "[REDACTED]";
     });
